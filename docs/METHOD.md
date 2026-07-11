@@ -75,8 +75,19 @@ First differences are the term that penalizes checkerboards (they are huge
 for alternating patterns, moderate for genuinely deep smooth basins);
 curvature alone does not separate the two. The weight is a bias–variance
 dial: 10⁻² suppressed the artifact and let the benchmark recover the basin
-smoothly, at the cost of some depth deficit at the basin center
-(see roadmap: multiscale refinement).
+smoothly, at the cost of some depth deficit at the basin center — which the
+multiscale scheme below removes.
+
+**Multiscale refinement (`MultiscaleInversion`).** A single coarse node grid
+leaves the basin centre too shallow (regularization/resolution trade-off);
+a single fine grid re-introduces the checkerboard null space. The fix is
+coarse-to-fine: solve on a schedule of node grids (e.g. 2×2 → 3×3 → 4×4 →
+5×5), **warm-starting** each scale from the previous solution
+(`resample_params`: the coarse interpolated depth map re-sampled at the finer
+nodes) and **relaxing the smoothing weight geometrically** as resolution grows
+(strong at coarse scales to lock the basin shape, weak at fine scales to add
+detail). Each scale is an independent L-BFGS-B solve; the live hooks report
+the active parameterization so callers need not track the schedule.
 
 **Gradients.** Forward finite differences: one full multi-shot simulation
 per parameter (steps: dx/2 in depth, 10 m/s in vs), all n+1 evaluations
@@ -95,7 +106,7 @@ inversion exposes per-forward and per-evaluation callbacks; the web studio
 uses them to stream wavefield frames, the current basin, and the misfit
 curve while the run is in progress.
 
-## 4. Ambient-noise mode
+## 4. Ambient-noise generation
 
 `basininv/noise.py` scatters tens of random force sources (random position,
 component, and Ricker-burst time series in a 0.5–8 Hz band) over the
@@ -103,22 +114,86 @@ surface, runs one long simulation, and computes smoothed H/V spectral
 ratios per station from the 3-component records. Verified behavior: strong
 low-frequency H/V amplification over deep sediments, with the peak moving
 to higher frequency as sediments thin toward the basin edge. Records of
-30–60 s are recommended to resolve sub-0.5 Hz resonances. This provides
-the data type for an HVSR-curve misfit inversion with the same optimizer —
-the intended path toward real microtremor data.
+30–60 s are recommended to resolve sub-0.5 Hz resonances.
 
-## 5. Validation summary
+## 5. Microtremor (HVSR) inversion — `basininv/hvsr.py`
+
+The field-data-oriented path (Microtremor Studio, `webapp_mt/`): recover a
+**3D multi-layer sediment Vs structure** from the **H/V spectral ratios** of a
+scattered station set.
+
+**Forward.** Under each station the earth is a 1-D layered column. Its HVSR is
+modelled as the ratio of the SH to the P vertical-incidence surface
+amplification of a damped layered medium, each computed by the Kramer (1996)
+propagator recursion with complex (hysteretic-Q) velocities:
+
+    HVSR(f) = A_SH(f; Vs profile) / A_P(f; Vp profile)
+
+The fundamental reproduces `f0 = Vs/4H` (validated to ~1–2 % for a single
+layer). This is a standard, inexpensive *transfer-function HVSR proxy* — one
+forward is a few complex-matrix recursions over frequency, i.e. milliseconds —
+so finite-difference gradients over a dense parameterization are cheap.
+Rayleigh-wave ellipticity / diffuse-field HVSR is the physics upgrade path.
+
+**Parameterization (`MultiLayerBasin`).** Sediment layers are described by
+per-layer **thickness** control-node grids (bicubic-interpolated, non-negative)
+plus per-layer Vs. Parameterizing thickness rather than absolute depth
+guarantees the interfaces never cross. **Any parameter can be fixed** via a
+free/fixed mask — a known bedrock interface (borehole), a fixed Vs jump, a
+known layer depth — pinned into the parameter vector before optimization.
+
+**Misfit.**
+
+    Φ(m) = w_d·½⟨(log H_syn − log H_obs)²⟩  +  w_p·⟨(log f0_syn − log f0_obs)²⟩  +  R(m)
+
+over stations × frequency. The log-curve term alone is non-unique and
+noise-sensitive; the **peak-frequency term** — a differentiable soft-argmax
+`f0` estimate (weighted mean with a high exponent, so it tracks the resonance,
+not a band centroid) — is what makes the objective's minimum sit at the truth
+and avoids HVSR cycle-skipping. It is weighted above the curve term
+(w_p ≈ 4, w_d ≈ 0.4). `R` is a first-difference roughness penalty on each
+thickness node grid. The flat **initial guess** is chosen so its fundamental
+matches the *median observed peak* — the other half of avoiding cycle-skipping.
+
+**Optimizer.** SciPy L-BFGS-B on the free parameters with **variable scaling**
+(thicknesses are tens–hundreds of metres, Vs hundreds of m/s; without dividing
+each variable by a characteristic scale the line search fails immediately).
+
+**Two hard limits, by design.** (1) *Band-clipping* — HVSR resolves only depths
+whose fundamental stays inside the measurable band (~0.3–10 Hz); once `f0`
+drops below the band, the peak-finder locks onto the first overtone and a deep
+basin masquerades as a shallow one. The synthetic basins are therefore capped
+at ≈140 m so `f0` stays in band; this is physics, not a code limit. (2)
+*Multi-layer non-uniqueness* — with several free layers of different Vs, many
+thickness splits give the same `f0`; recovering the individual layers needs the
+curve shape, known Vs, or a fixed bedrock (hence the fix-parameters feature).
+
+**Uncertainty ensemble.** Optionally re-run the inversion across members that
+vary the noise realization, starting model, smoothing strength **and node
+resolution**, and report a per-cell bedrock-depth ±σ map with a ±2σ coverage
+check. Varying node resolution is essential: in well-constrained cases the
+residual is *representation bias* (a coarse grid cannot fit the sharp centre),
+not variance, so a noise-only ensemble is badly over-confident (σ ≈ 1 m vs
+≈10 m error). Members run in a process pool.
+
+## 6. Validation summary
 
 - **Solver smoke test**: stability (no growth over the run), free-surface
   sanity, and a 98% relative record difference between basin and halfspace
   models (strong signal content).
-- **Benchmark inversion** (50×50×30, two-bump basin 519 m deep, 4 shots,
+- **Elastic FWI benchmark** (50×50×30, two-bump basin 519 m deep, 4 shots,
   36 receivers, 10 unknowns, flat 101 m / vs=550 start): misfit
   0.52 → 0.021, vs 395 m/s recovered vs 400 true, RMS depth error
-  120 → 91 m, smooth artifact-free geometry.
-- **Known limitation**: central depth deficit from the
-  regularization/resolution trade-off of a 3×3 node grid; the multiscale
-  refinement in the roadmap addresses it.
+  120 → 91 m, smooth artifact-free geometry. The residual central depth
+  deficit of a single 3×3 grid is what the multiscale schedule (§3) targets.
+- **HVSR forward**: single-layer HVSR peak within ~1–2 % of `f0 = Vs/4H`
+  across a range of thicknesses.
+- **HVSR inversion benchmark** (3-layer basin, bedrock ≤ 140 m, 25 stations,
+  Vs fixed at truth, 5 % HVSR noise): bedrock-depth RMS 32 → 13 m, depth
+  correlation 0.97; layer Vs recovered within a few % when left free.
+- **Uncertainty ensemble** (same case): resolution-varying members give a
+  bedrock σ ≈ 7 m with the truth inside ±2σ over ~50–68 % of the area, versus
+  a falsely-confident σ ≈ 1 m for a noise-only ensemble.
 
 ## References
 
@@ -130,3 +205,7 @@ the intended path toward real microtremor data.
   media using staggered-grid finite differences. *BSSA*, 86(4).
 - Cerjan, C. et al. (1985). A nonreflecting boundary condition for discrete
   acoustic and elastic wave equations. *Geophysics*, 50(4).
+- Kramer, S. L. (1996). *Geotechnical Earthquake Engineering* — 1-D layered
+  site-response transfer function (propagator recursion). Prentice Hall.
+- SESAME (2004). Guidelines for the implementation of the H/V spectral ratio
+  technique on ambient vibrations.
