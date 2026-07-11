@@ -219,8 +219,14 @@ class MultiscaleInversion:
                 self.grid, ncx=st.ncx, ncy=st.ncy,
                 margin_cells=self.margin_cells, invert_vs=self.invert_vs)
             if x is None:
-                x_start = x0 if x0 is not None else new_param.pack(
-                    np.zeros((st.ncx, st.ncy)), vs_init)
+                # use the caller's x0 only if it matches this first stage;
+                # otherwise start flat (carrying vs from x0 when available)
+                if x0 is not None and len(np.ravel(x0)) == new_param.n_params:
+                    x_start = np.asarray(x0, float)
+                else:
+                    vs = (float(np.ravel(x0)[-1]) if x0 is not None
+                          and new_param.invert_vs else vs_init)
+                    x_start = new_param.pack(np.zeros((st.ncx, st.ncy)), vs)
             else:
                 x_start = resample_params(param, x, new_param)
             param = new_param

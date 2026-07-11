@@ -97,6 +97,41 @@ type for the same inversion machinery:
 
 ![H/V across the basin](docs/img/hvsr.png)
 
+## Microtremor (HVSR) studio — a second app
+
+A separate companion app inverts **ambient-microtremor H/V curves** from a
+scattered set of surface stations into a **3-D multi-layer sediment Vs
+structure** — the field-data-oriented counterpart to the active-source FWI
+above. It shares the same `basininv` package and stdlib-only server, on its
+own port:
+
+```bash
+python3 webapp_mt/app.py        # then open http://127.0.0.1:8643
+```
+
+Physics (`basininv/hvsr.py`): under each station the earth is a 1-D layered
+column; its HVSR is modelled as the ratio of the SH to the P vertical-incidence
+surface amplification of a damped layered medium (propagator recursion), whose
+fundamental reproduces `f0 = Vs/4H`. One forward is a few matrix recursions over
+frequency — milliseconds — so finite-difference gradients over a dense
+parameterization are cheap. Sediment layers are parameterized by **thickness**
+control-node grids (non-negative, so interfaces never cross) plus per-layer Vs;
+**any parameter can be fixed** (known bedrock from boreholes, a fixed Vs jump, a
+known layer depth). The inversion matches modelled to observed H/V for all
+stations with L-BFGS-B, driven primarily by a peak-frequency term that avoids
+HVSR cycle-skipping.
+
+The studio streams the whole loop live in tabbed steps — **Stations & Data**
+(microtremor record → H/V curve per station), **Invert** (thickness nodes + Vs),
+**Report** (Vs cross-sections, bedrock-depth score, H/V fits) — plus an
+interactive **3-D Vs viewer** (stacked interfaces coloured by layer Vs, with the
+hidden true bedrock as an overlay) that rebuilds every evaluation.
+
+**Benchmark** (3-layer basin, bedrock ≤ 140 m, 25 stations, Vs fixed at truth,
+5 % HVSR noise): bedrock-depth RMS 32 → 13 m, depth correlation **0.97**. HVSR
+resolves only depths whose fundamental stays in a measurable band (~0.3–10 Hz);
+deeper basins, or free multi-layer Vs, need the fixed-parameter constraints.
+
 ## Installation
 
 Python ≥ 3.9 with NumPy, SciPy and matplotlib:
@@ -112,7 +147,8 @@ No compiled extensions, no web framework — everything is NumPy + stdlib.
 ## Usage
 
 ```bash
-python3 webapp/app.py                 # live studio at http://127.0.0.1:8642
+python3 webapp/app.py                 # active-source studio  http://127.0.0.1:8642
+python3 webapp_mt/app.py              # microtremor HVSR studio  http://127.0.0.1:8643
 python3 scripts/smoke_test.py         # ~10 s solver sanity check
 python3 scripts/run_demo.py --quick   # CLI end-to-end inversion (~1 h)
 python3 scripts/run_demo.py           # larger run (hours)
@@ -129,10 +165,12 @@ CLI outputs (data + figures) land in `outputs/`; studio outputs in
 | `basininv/solver.py` | 3D isotropic elastic velocity–stress staggered-grid FD: 4th-order space, 2nd-order time, Graves stress-imaging free surface, Cerjan absorbing edges, per-step livestream hook |
 | `basininv/basin.py` | true basin (sum of Gaussians) and inversion parameterization (control-node depth grid → bicubic surface, + sediment vs); sigmoid-blended interface so the misfit is smooth in the parameters |
 | `basininv/survey.py` | shots (vertical-force Ricker at the surface), receiver grid, parallel multi-shot forward modeling |
-| `basininv/inversion.py` | waveform misfit + anti-checkerboard roughness penalty, FD gradients on a persistent worker pool, L-BFGS-B, live eval/forward hooks |
+| `basininv/inversion.py` | waveform misfit + anti-checkerboard roughness penalty, FD gradients on a persistent worker pool, L-BFGS-B, live hooks; **`MultiscaleInversion`** coarse-to-fine node schedule |
 | `basininv/noise.py` | ambient-noise simulation and H/V spectral-ratio extraction |
-| `basininv/viz.py` | all figures, incl. live wavefield / inversion-state frames |
-| `webapp/` | **BasinInv3D Studio** — the live dashboard (stdlib http.server) |
+| `basininv/hvsr.py` | **microtremor path**: 1-D layered HVSR forward, multi-layer thickness+Vs parameterization, fixable parameters, peak-informed HVSR inversion |
+| `basininv/viz.py`, `basininv/hvsr_viz.py` | all figures (elastic + HVSR/Vs), incl. live frames |
+| `webapp/` | **BasinInv3D Studio** — active-source elastic FWI dashboard |
+| `webapp_mt/` | **Microtremor Studio** — HVSR → 3-D multi-layer Vs dashboard |
 | `scripts/` | smoke test, CLI inversion demo, ambient-noise demo |
 | `docs/METHOD.md` | numerical method, inversion formulation, lessons learned |
 
@@ -152,14 +190,15 @@ choice: [docs/METHOD.md](docs/METHOD.md).
 
 ## Roadmap
 
-- **Multiscale node refinement** — invert 3×3 nodes with strong smoothing,
-  then warm-start 4×4/5×5 with weaker smoothing (removes the central depth
-  deficit of the benchmark).
+- ✅ **Multiscale node refinement** — `MultiscaleInversion` inverts a
+  coarse-to-fine node schedule, warm-started with a relaxing smoothing penalty.
+- ✅ **HVSR-misfit inversion** — the Microtremor Studio inverts ambient-noise
+  H/V curves for a 3-D multi-layer Vs structure (field-data path).
 - **Adjoint-state gradients** — one forward + one adjoint run per shot
   instead of one forward per parameter; unlocks dense parameterizations and
   full-volume FWI.
 - **CPML absorbing boundaries** to replace the Cerjan sponges.
-- **HVSR-misfit inversion** — point the same optimizer at ambient-noise H/V
-  curves instead of waveforms (field-data path).
+- **Rayleigh-ellipticity / diffuse-field HVSR** — replace the transfer-function
+  HVSR proxy with the full microtremor ellipticity forward.
 - **Real-data path** — source-wavelet estimation, time windows, frequency
   continuation, topography.
