@@ -49,7 +49,7 @@ class InversionLog:
 
 class WaveformInversion:
     def __init__(self, survey: Survey, param: BasinParameterization,
-                 d_obs, mat: Materials, smooth_weight=1e-3,
+                 d_obs, mat: Materials, smooth_weight=1e-2,
                  workers=4, fd_step=None):
         self.survey = survey
         self.param = param
@@ -93,14 +93,18 @@ class WaveformInversion:
         return self._get_pool().submit(_misfit_worker, np.asarray(params, float)).result()
 
     def _smooth_penalty(self, params):
+        """Roughness of the node-depth grid.  First differences dominate the
+        penalty: they are what suppresses checkerboard patterns, which the
+        waveform misfit alone cannot discriminate against."""
         nd, _ = self.param.unpack(params)
-        d2 = 0.0
+        r = (np.sum(np.diff(nd, 1, axis=0) ** 2)
+             + np.sum(np.diff(nd, 1, axis=1) ** 2))
         if self.param.ncx > 2:
-            d2 += np.sum(np.diff(nd, 2, axis=0) ** 2)
+            r += 0.5 * np.sum(np.diff(nd, 2, axis=0) ** 2)
         if self.param.ncy > 2:
-            d2 += np.sum(np.diff(nd, 2, axis=1) ** 2)
+            r += 0.5 * np.sum(np.diff(nd, 2, axis=1) ** 2)
         scale = (self.survey.grid.nz * self.survey.grid.dx) ** 2
-        return self.smooth_weight * d2 / scale
+        return self.smooth_weight * r / scale
 
     def misfit(self, params):
         return self._data_misfit(params) + self._smooth_penalty(params)
