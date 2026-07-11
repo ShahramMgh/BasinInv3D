@@ -23,9 +23,27 @@ proof-of-concept for going beyond 1D HVSR inversion in sedimentary basins.
 | `basininv/survey.py` | shots (vertical-force Ricker at the surface), receiver grid, parallel multi-shot forward modeling |
 | `basininv/inversion.py` | normalized least-squares waveform misfit + Tikhonov node smoothing, parallel finite-difference gradients, L-BFGS-B |
 | `basininv/noise.py` | ambient-noise mode: distributed random sources, H/V spectral-ratio extraction (alternative data type, same inversion machinery) |
-| `basininv/viz.py` | depth maps, 3D interfaces, waveform fits, convergence |
+| `basininv/viz.py` | depth maps, 3D interfaces, waveform fits, convergence, live wavefield/inversion frames |
+| `webapp/app.py` | **BasinInv3D Studio** — live web dashboard running the whole pipeline (stdlib http.server) |
 
 ## Run
+
+### Web studio (recommended)
+
+```bash
+/usr/bin/python3 webapp/app.py            # then open http://127.0.0.1:8642
+```
+
+Pick a preset (fast ≈ 10–20 min, standard ≈ 1–2 h), press **Run experiment**,
+and watch live: the random true basin, the elastic wavefield propagating and
+reverberating in the valley (surface + cross-section view), then the inverted
+basin / difference map / misfit curve updating after every gradient
+evaluation, and a final report with score tiles. Stage flow, per-forward
+progress, log console and Stop button included. All state is served by a
+background pipeline thread; forward simulations for the FD gradient run in a
+persistent process pool.
+
+### Command line
 
 ```bash
 /usr/bin/python3 scripts/smoke_test.py        # ~10 s sanity check
@@ -33,7 +51,7 @@ proof-of-concept for going beyond 1D HVSR inversion in sedimentary basins.
 /usr/bin/python3 scripts/run_demo.py          # fuller run (hours)
 ```
 
-Outputs (data + figures) land in `outputs/`.
+Outputs (data + figures) land in `outputs/` (CLI) or `webapp/run/` (studio).
 
 Use `/usr/bin/python3` (has NumPy/SciPy/matplotlib); the anaconda env lacks
 matplotlib.

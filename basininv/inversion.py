@@ -2,8 +2,14 @@
 
 Least-squares waveform misfit against the synthetic "observed" data, mild
 Tikhonov smoothing on the control-node depths, finite-difference gradients
-(one full multi-shot forward per parameter, run in parallel worker
-processes), and scipy L-BFGS-B on top.
+(one full multi-shot forward per parameter), and scipy L-BFGS-B on top.
+
+The FD forwards run in a *persistent* process pool whose workers receive the
+static problem data (survey, parameterization, observed records) once at
+startup; each job then ships only a parameter vector.  Live hooks:
+
+    on_eval(k, misfit, params)   after every gradient evaluation
+    on_forward(done, total)      as the FD forwards of one gradient finish
 
 With ~10 parameters and small grids this is a practical, fully general
 scheme; an adjoint-state gradient is the upgrade path for larger runs.
@@ -11,7 +17,7 @@ scheme; an adjoint-state gradient is the upgrade path for larger runs.
 from __future__ import annotations
 
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -19,6 +25,19 @@ from scipy.optimize import minimize
 
 from .basin import BasinParameterization, Materials
 from .survey import Survey, forward_from_params
+
+# ------------------------------------------------------------------ workers
+_W: dict = {}
+
+
+def _init_worker(survey, param, mat, d_obs, norm):
+    _W.update(survey=survey, param=param, mat=mat, d_obs=d_obs, norm=norm)
+
+
+def _misfit_worker(params):
+    d = forward_from_params(_W["survey"], _W["param"], params, _W["mat"],
+                            workers=1)
+    return 0.5 * float(np.sum((d.astype(np.float64) - _W["d_obs"]) ** 2)) / _W["norm"]
 
 
 @dataclass
@@ -40,26 +59,38 @@ class WaveformInversion:
         self.smooth_weight = smooth_weight
         self.workers = workers
         # FD step: meters for depths, m/s for vs
-        n_nodes = param.ncx * param.ncy
         h = np.full(param.n_params, 0.5 * survey.grid.dx)
         if param.invert_vs:
             h[-1] = 10.0
         self.fd_step = h if fd_step is None else fd_step
         self.log = InversionLog()
-        self._cache = {}
+        self.on_eval = None       # callable(k, misfit, params)
+        self.on_forward = None    # callable(done, total)
+        self._pool = None
+
+    # ------------------------------------------------------------- pool
+    def _get_pool(self):
+        if self._pool is None:
+            self._pool = ProcessPoolExecutor(
+                max_workers=self.workers, initializer=_init_worker,
+                initargs=(self.survey, self.param, self.mat,
+                          self.d_obs, self.norm))
+        return self._pool
+
+    def close(self):
+        if self._pool is not None:
+            self._pool.shutdown()
+            self._pool = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     # -------------------------------------------------------------- misfit
     def _data_misfit(self, params):
-        key = tuple(np.round(params, 6))
-        if key in self._cache:
-            return self._cache[key]
-        d = forward_from_params(self.survey, self.param, params, self.mat,
-                                workers=self.workers)
-        phi = 0.5 * float(np.sum((d.astype(np.float64) - self.d_obs) ** 2)) / self.norm
-        self._cache[key] = phi
-        if len(self._cache) > 200:
-            self._cache.pop(next(iter(self._cache)))
-        return phi
+        return self._get_pool().submit(_misfit_worker, np.asarray(params, float)).result()
 
     def _smooth_penalty(self, params):
         nd, _ = self.param.unpack(params)
@@ -75,27 +106,27 @@ class WaveformInversion:
         return self._data_misfit(params) + self._smooth_penalty(params)
 
     # ------------------------------------------------------------ gradient
-    def _fd_jobs(self, params):
+    def gradient(self, params):
+        """Forward-difference gradient; the (n+1) multi-shot forwards run
+        concurrently on the persistent pool."""
+        params = np.asarray(params, float)
         jobs = [params.copy()]
         for i in range(len(params)):
             p = params.copy()
             p[i] += self.fd_step[i]
             jobs.append(p)
-        return jobs
 
-    def gradient(self, params):
-        """Forward-difference gradient; the (n+1) multi-shot forwards are
-        spread over the worker pool at single-shot granularity."""
-        jobs = self._fd_jobs(params)
-        # run each parameter set with 1 worker but many sets concurrently
-        with ProcessPoolExecutor(max_workers=self.workers) as ex:
-            futs = [ex.submit(_misfit_worker,
-                              (self.survey, self.param, p, self.mat,
-                               self.d_obs, self.norm))
-                    for p in jobs]
-            phis = [f.result() for f in futs]
+        pool = self._get_pool()
+        futs = {pool.submit(_misfit_worker, p): i for i, p in enumerate(jobs)}
+        phis = [0.0] * len(jobs)
+        done = 0
+        for f in as_completed(futs):
+            phis[futs[f]] = f.result()
+            done += 1
+            if self.on_forward is not None:
+                self.on_forward(done, len(jobs))
+
         phi0 = phis[0]
-        self._cache[tuple(np.round(params, 6))] = phi0
         g = np.array([(phis[i + 1] - phi0) / self.fd_step[i]
                       for i in range(len(params))])
         # regularization gradient by cheap FD (no simulations involved)
@@ -110,23 +141,23 @@ class WaveformInversion:
         bounds = self.param.bounds(max_depth)
 
         def fun(x):
-            f, g = self.gradient(np.asarray(x, float))
-            self.log.params.append(np.asarray(x, float).copy())
+            x = np.asarray(x, float)
+            f, g = self.gradient(x)
+            self.log.params.append(x.copy())
             self.log.misfit.append(f)
             if verbose:
                 el = time.time() - self.log.t0
                 print(f"  eval {len(self.log.misfit):3d}  misfit {f:.6e}  "
                       f"[{el:7.1f}s]", flush=True)
+            if self.on_eval is not None:
+                self.on_eval(len(self.log.misfit), f, x.copy())
             return f, g
 
-        res = minimize(fun, np.asarray(x0, float), jac=True, method="L-BFGS-B",
-                       bounds=bounds,
-                       options={"maxiter": maxiter, "ftol": 1e-10,
-                                "gtol": 1e-12, "maxls": 8})
+        try:
+            res = minimize(fun, np.asarray(x0, float), jac=True,
+                           method="L-BFGS-B", bounds=bounds,
+                           options={"maxiter": maxiter, "ftol": 1e-10,
+                                    "gtol": 1e-12, "maxls": 8})
+        finally:
+            self.close()
         return res, self.log
-
-
-def _misfit_worker(args):
-    survey, param, params, mat, d_obs, norm = args
-    d = forward_from_params(survey, param, params, mat, workers=1)
-    return 0.5 * float(np.sum((d.astype(np.float64) - d_obs) ** 2)) / norm

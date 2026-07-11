@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BasinInv3D Studio</title>
+<style>
+  :root {
+    --bg: #101317; --panel: #191e25; --panel2: #1f2630; --line: #2c3540;
+    --ink: #e8eaed; --ink2: #9aa3ad; --ink3: #6c757f;
+    --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 14px;
+           padding: 14px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; font-weight: 650; }
+  header .sub { color: var(--ink2); font-size: 12.5px; }
+  .pill { margin-left: auto; padding: 4px 14px; border-radius: 999px;
+          font-size: 12.5px; font-weight: 600; border: 1px solid var(--line);
+          color: var(--ink2); }
+  .pill.running { color: var(--warn); border-color: var(--warn); }
+  .pill.done    { color: var(--ok);   border-color: var(--ok); }
+  .pill.error, .pill.stopped { color: var(--err); border-color: var(--err); }
+
+  .wrap { display: grid; grid-template-columns: 290px 1fr; gap: 16px;
+          padding: 16px 22px; max-width: 1600px; margin: 0 auto; }
+  @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 12px; font-weight: 650; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--ink2); margin-bottom: 10px; }
+
+  /* config */
+  label { display: block; font-size: 12px; color: var(--ink2); margin: 8px 0 3px; }
+  select, input { width: 100%; background: var(--panel2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+    font-size: 13px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .btnrow { display: flex; gap: 8px; margin-top: 14px; }
+  button { flex: 1; padding: 9px 0; border-radius: 7px; border: none;
+           font-size: 13.5px; font-weight: 650; cursor: pointer; }
+  #run  { background: var(--accent); color: #0b1524; }
+  #stop { background: transparent; color: var(--err);
+          border: 1px solid var(--err); }
+  button:disabled { opacity: .35; cursor: default; }
+
+  /* stages */
+  .stages { display: flex; gap: 6px; margin-bottom: 10px; }
+  .stage { flex: 1; text-align: center; font-size: 12px; padding: 7px 0;
+           border-radius: 7px; background: var(--panel2); color: var(--ink3);
+           border: 1px solid var(--line); }
+  .stage.active { color: var(--warn); border-color: var(--warn); font-weight: 650; }
+  .stage.passed { color: var(--ok); border-color: var(--line); }
+  .bar { height: 6px; background: var(--panel2); border-radius: 3px;
+         overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent);
+               transition: width .4s; }
+  .note { font-size: 12px; color: var(--ink2); margin-top: 6px; min-height: 16px; }
+
+  /* stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+           margin-top: 12px; }
+  @media (max-width: 1200px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 8px; padding: 10px 12px; }
+  .tile .v { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .k { font-size: 11.5px; color: var(--ink2); margin-top: 2px; }
+  .tile .d { font-size: 11.5px; color: var(--ink3); }
+  .good { color: var(--ok); }
+
+  /* images */
+  .imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+          margin-top: 16px; }
+  @media (max-width: 1200px) { .imgs { grid-template-columns: 1fr; } }
+  .imgcard img { width: 100%; border-radius: 6px; background: #fff;
+                 display: block; min-height: 60px; }
+  .imgcard.wide { grid-column: 1 / -1; }
+  .hidden { display: none; }
+
+  /* log */
+  #log { background: #0b0e12; border: 1px solid var(--line); border-radius: 8px;
+         padding: 10px 12px; height: 190px; overflow-y: auto; margin-top: 16px;
+         font: 12px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace;
+         color: var(--ink2); white-space: pre-wrap; }
+  #err { color: var(--err); font: 12px ui-monospace, monospace;
+         white-space: pre-wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>BasinInv3D Studio</h1>
+  <span class="sub">3D elastic waves &rarr; surface records &rarr; basin-geometry inversion, live</span>
+  <span class="pill" id="pill">idle</span>
+</header>
+
+<div class="wrap">
+  <!-- ============================ config ============================ -->
+  <div>
+    <div class="card">
+      <h2>Experiment</h2>
+      <label>Preset</label>
+      <select id="preset">
+        <option value="fast" selected>fast (~10&ndash;20 min)</option>
+        <option value="standard">standard (~1&ndash;2 h)</option>
+      </select>
+      <div class="grid2">
+        <div><label>Basin seed</label><input id="seed" type="number" value="1"></div>
+        <div><label>Control nodes / side</label><input id="ncx" type="number" value="3" min="2" max="5"></div>
+        <div><label>Max L-BFGS iters</label><input id="maxiter" type="number" value="8" min="1"></div>
+        <div><label>Workers</label><input id="workers" type="number" value="3" min="1" max="4"></div>
+        <div><label>True sediment vs</label><input id="vs_true" type="number" value="400"></div>
+        <div><label>Initial-guess vs</label><input id="vs_init" type="number" value="550"></div>
+        <div><label>Noise on data (%)</label><input id="noise_pct" type="number" value="0" min="0"></div>
+        <div><label>Init depth fraction</label><input id="init_depth_frac" type="number" value="0.15" step="0.05"></div>
+      </div>
+      <div class="btnrow">
+        <button id="run">Run experiment</button>
+        <button id="stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>What you are watching</h2>
+      <div style="font-size:12.5px;color:var(--ink2)">
+        <p><b style="color:var(--ink)">1 Build</b> — an imaginary sediment-filled
+        valley is generated; only the forward engine ever sees it.</p>
+        <p style="margin-top:6px"><b style="color:var(--ink)">2 Observe</b> — full
+        3D elastic waves from each shot, recorded on the surface array.
+        Watch them trap and reverberate in the soft basin.</p>
+        <p style="margin-top:6px"><b style="color:var(--ink)">3 Invert</b> —
+        starting from a flat wrong guess, L-BFGS-B updates interface depths +
+        sediment velocity to fit the records.</p>
+        <p style="margin-top:6px"><b style="color:var(--ink)">4 Report</b> —
+        recovered vs. true geometry, waveform fits, score.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ live ============================ -->
+  <div>
+    <div class="card">
+      <div class="stages" id="stages">
+        <div class="stage" data-s="build">1 Build</div>
+        <div class="stage" data-s="observe">2 Observe</div>
+        <div class="stage" data-s="invert">3 Invert</div>
+        <div class="stage" data-s="report">4 Report</div>
+      </div>
+      <div class="bar"><div id="bar"></div></div>
+      <div class="note" id="note"></div>
+
+      <div class="tiles">
+        <div class="tile"><div class="v" id="t_misfit">&ndash;</div>
+          <div class="k">waveform misfit</div><div class="d" id="t_misfit_d"></div></div>
+        <div class="tile"><div class="v" id="t_rms">&ndash;</div>
+          <div class="k">RMS depth error (m)</div><div class="d" id="t_rms_d"></div></div>
+        <div class="tile"><div class="v" id="t_vs">&ndash;</div>
+          <div class="k">sediment vs (m/s)</div><div class="d" id="t_vs_d"></div></div>
+        <div class="tile"><div class="v" id="t_time">&ndash;</div>
+          <div class="k">elapsed</div><div class="d" id="t_time_d"></div></div>
+      </div>
+      <div id="err"></div>
+    </div>
+
+    <div class="imgs">
+      <div class="card imgcard wide" id="c_model"><h2>True model &amp; acquisition</h2>
+        <img id="i_model" alt="true model"></div>
+      <div class="card imgcard wide" id="c_wave"><h2>Wave propagation (live)</h2>
+        <img id="i_wave" alt="wavefield"></div>
+      <div class="card imgcard wide" id="c_inversion"><h2>Inversion state (live)</h2>
+        <img id="i_inversion" alt="inversion state"></div>
+      <div class="card imgcard" id="c_convergence"><h2>Convergence</h2>
+        <img id="i_convergence" alt="convergence"></div>
+      <div class="card imgcard" id="c_seismograms"><h2>Waveform fit</h2>
+        <img id="i_seismograms" alt="seismograms"></div>
+      <div class="card imgcard wide" id="c_depth_maps"><h2>Final: true vs inverted depth</h2>
+        <img id="i_depth_maps" alt="depth maps"></div>
+      <div class="card imgcard wide" id="c_interface_3d"><h2>Final: 3D interfaces</h2>
+        <img id="i_interface_3d" alt="3d interfaces"></div>
+    </div>
+
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const IMGS = ["model","wave","inversion","convergence","seismograms",
+              "depth_maps","interface_3d"];
+let seen = {};
+IMGS.forEach(n => $("c_" + n).classList.add("hidden"));
+
+function fmt(x, d=3) { return (x === null || x === undefined) ? "–"
+  : Number(x).toPrecision(d); }
+
+async function poll() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+
+    // status pill + buttons
+    const pill = $("pill");
+    pill.textContent = s.running ? s.stage : s.stage;
+    pill.className = "pill " + (s.running ? "running"
+      : (s.stage === "done" ? "done"
+      : (s.stage === "error" || s.stage === "stopped" ? s.stage : "")));
+    $("run").disabled = s.running;
+    $("stop").disabled = !s.running;
+
+    // stages + progress
+    const order = ["build","observe","invert","report"];
+    const cur = order.indexOf(s.stage);
+    document.querySelectorAll(".stage").forEach((el, i) => {
+      el.className = "stage" + (i === cur ? " active"
+        : (i < cur || s.stage === "done" ? " passed" : ""));
+    });
+    $("bar").style.width = (100 * (s.progress || 0)) + "%";
+    $("note").textContent = s.stage_note || "";
+
+    // tiles
+    const m = s.misfit || [], r = s.rms || [];
+    if (m.length) {
+      $("t_misfit").textContent = fmt(m[m.length-1]);
+      $("t_misfit_d").textContent = "start " + fmt(m[0]);
+    }
+    if (r.length) {
+      $("t_rms").textContent = Math.round(r[r.length-1]);
+      $("t_rms_d").textContent = "start " + Math.round(r[0]);
+      $("t_rms").className = "v" +
+        (r[r.length-1] < 0.5 * r[0] ? " good" : "");
+    }
+    if (s.result) {
+      $("t_vs").textContent = Math.round(s.result.vs_inv);
+      $("t_vs_d").textContent = "true " + Math.round(s.result.vs_true);
+      $("t_vs").className = "v" + (Math.abs(s.result.vs_inv - s.result.vs_true)
+        < 0.05 * s.result.vs_true ? " good" : "");
+    }
+    if (s.t_start) {
+      const el = s.result ? s.result.elapsed
+        : (s.running ? Date.now()/1000 - s.t_start : null);
+      if (el !== null) {
+        $("t_time").textContent = el > 90
+          ? Math.floor(el/60) + "m" + String(Math.round(el%60)).padStart(2,"0")
+          : Math.round(el) + "s";
+        $("t_time_d").textContent = s.result
+          ? s.result.n_evals + " gradient evals" : "";
+      }
+    }
+
+    // images (reload only on version bump)
+    for (const n of IMGS) {
+      const v = (s.images || {})[n];
+      if (v && seen[n] !== v) {
+        seen[n] = v;
+        $("c_" + n).classList.remove("hidden");
+        $("i_" + n).src = "/img/" + n + ".png?v=" + v;
+      }
+    }
+
+    // log + error
+    const lg = $("log");
+    const atBottom = lg.scrollTop + lg.clientHeight > lg.scrollHeight - 30;
+    lg.textContent = (s.log || []).join("\n");
+    if (atBottom) lg.scrollTop = lg.scrollHeight;
+    $("err").textContent = s.error || "";
+  } catch (e) { /* server briefly busy; keep polling */ }
+}
+
+$("run").onclick = async () => {
+  seen = {};
+  IMGS.forEach(n => $("c_" + n).classList.add("hidden"));
+  const body = { preset: $("preset").value };
+  for (const k of ["seed","ncx","maxiter","workers","vs_true","vs_init",
+                   "noise_pct","init_depth_frac"])
+    body[k] = $(k).value;
+  await fetch("/api/start", { method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body) });
+  poll();
+};
+$("stop").onclick = () => fetch("/api/stop", { method: "POST" });
+$("preset").onchange = () => {
+  $("maxiter").value = $("preset").value === "fast" ? 8 : 14;
+};
+
+poll();
+setInterval(poll, 800);
+</script>
+</body>
+</html>

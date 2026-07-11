@@ -209,12 +209,15 @@ class ElasticSolver3D:
             f *= d
 
     # ------------------------------------------------------------------ run
-    def run(self, nt, sources=(), receivers=None, snapshot_every=0):
+    def run(self, nt, sources=(), receivers=None, snapshot_every=0,
+            on_step=None):
         """Time-march nt steps.
 
         sources   : list of (ix, iy, iz, component, wavelet[nt]) tuples;
                     component in {"fx","fy","fz"} (body force) or "explosion".
         receivers : integer array (nrec, 2) of surface (ix, iy) positions.
+        on_step   : optional callable(it, nt, solver) invoked after every
+                    step — livestream hook; may raise to abort the run.
         Returns (seis, snaps): seis is (nrec, 3, nt) of (vx,vy,vz) at z=0.
         """
         self.reset()
@@ -242,13 +245,15 @@ class ElasticSolver3D:
                 seis[:, 2, it] = self.vz[rx, ry, 0]
             if snapshot_every and it % snapshot_every == 0:
                 snaps.append(self.vz[:, :, 0].copy())
+            if on_step is not None:
+                on_step(it, nt, self)
         return seis, snaps
 
 
 def ricker(f0, nt, dt, t0=None):
     """Ricker wavelet sampled at the solver time step."""
     if t0 is None:
-        t0 = 1.5 / f0
+        t0 = 1.2 / f0
     t = np.arange(nt) * dt - t0
     a = (np.pi * f0 * t) ** 2
     return ((1.0 - 2.0 * a) * np.exp(-a)).astype(DTYPE)
