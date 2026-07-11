@@ -49,6 +49,7 @@ persistent process pool.
 /usr/bin/python3 scripts/smoke_test.py        # ~10 s sanity check
 /usr/bin/python3 scripts/run_demo.py --quick  # small end-to-end inversion
 /usr/bin/python3 scripts/run_demo.py          # fuller run (hours)
+/usr/bin/python3 scripts/run_noise_demo.py    # ambient-noise H/V across the basin
 ```
 
 Outputs (data + figures) land in `outputs/` (CLI) or `webapp/run/` (studio).
