@@ -31,6 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from concurrent.futures import ProcessPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from basininv import GridSpec
@@ -270,7 +271,56 @@ def pipeline(cfg):
             vs_true=[int(v) for v in vs_true],
             vs_inv=[int(v) for v in vs_inv],
             max_depth_true=float(true_depth.max()),
-            max_depth_inv=float(inv_depth.max()))
+            max_depth_inv=float(inv_depth.max()),
+            station_xy=[[round(float(a), 1) for a in p] for p in xy])
+
+        # ------------------------------------- optional uncertainty ensemble
+        n_ens = cfg.get("ensemble", 1)
+        if n_ens > 1:
+            set_state(stage_note=f"uncertainty ensemble (0/{n_ens - 1})",
+                      progress=0.0)
+            log(f"running {n_ens - 1} extra ensemble members for uncertainty")
+            # Members differ not just by data noise but by the analyst's
+            # subjective choices — starting model and smoothing strength — since
+            # those, not measurement noise, dominate HVSR non-uniqueness.  A
+            # noise-only ensemble is badly over-confident.
+            erng = np.random.default_rng(cfg["seed"] + 777)
+            jobs = []
+            for mem in range(1, n_ens):
+                hv_m = H.observed_hvsr(vs_true, th_true, freqs,
+                                       noise_pct=cfg["noise_pct"],
+                                       seed=cfg["seed"] + 100 + mem)
+                sw_m = cfg["smooth_weight"] * float(erng.uniform(0.4, 2.5))
+                # vary node resolution too: representation/resolution is the
+                # dominant uncertainty, and a fixed grid hides it
+                ncx_m = int(np.clip(cfg["ncx"] + erng.integers(-1, 2), 2, 5))
+                model_m = H.MultiLayerBasin(grid, n_layers=nL, ncx=ncx_m,
+                                            ncy=ncx_m, margin_cells=margin)
+                x0m = H.initial_guess(model_m, spec, freqs, hv_m,
+                                      frac=float(erng.uniform(0.7, 1.3)))
+                free_m, x0m = _build_free_mask(model_m, cfg, true_maps, x0m)
+                jobs.append((model_m, spec, xy, freqs, hv_m, free_m, x0m,
+                             max_thick, cfg["maxiter"], sw_m))
+            depths = [inv_depth]
+            with ProcessPoolExecutor(max_workers=min(3, len(jobs))) as ex:
+                for k, dm in enumerate(ex.map(H.invert_member, jobs)):
+                    depths.append(dm)
+                    set_state(progress=(k + 1) / len(jobs),
+                              stage_note=f"uncertainty ensemble ({k + 1}/{n_ens - 1})")
+                    _check_stop()
+            depths = np.stack(depths)
+            mean_d, std_d = depths.mean(0), depths.std(0)
+            V.render_uncertainty(grid, mean_d, std_d, true_depth, xy,
+                                 os.path.join(RUN_DIR, "uncertainty.png"))
+            bump("uncertainty")
+            within2 = float(np.mean(np.abs(mean_d - true_depth) <= 2 * std_d + 1e-9))
+            result["ensemble"] = n_ens
+            result["depth_std_median"] = float(np.median(std_d))
+            result["depth_std_max"] = float(std_d.max())
+            result["coverage_2sigma"] = within2
+            log(f"ensemble: median depth σ {np.median(std_d):.0f} m, "
+                f"truth within ±2σ over {100*within2:.0f}% of area")
+
         set_state(stage="done", stage_note="", progress=1.0, result=result)
         log(f"DONE in {result['elapsed']:.0f}s: bedrock RMS {rms0:.0f}→{rms:.0f} m, "
             f"depth correlation {corr:.2f}")
@@ -300,6 +350,7 @@ def _parse_cfg(body):
     fix = body.get("fix_vs") or []
     cfg["fix_vs"] = [bool(fix[L]) if L < len(fix) else False for L in range(nL)]
     cfg["bedrock_known"] = bool(body.get("bedrock_known", False))
+    cfg["ensemble"] = int(np.clip(int(body.get("ensemble", 1) or 1), 1, 8))
     if "maxiter" in body:
         try:
             cfg["maxiter"] = int(body["maxiter"])

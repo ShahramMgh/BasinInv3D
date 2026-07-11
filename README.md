@@ -125,7 +125,12 @@ The studio streams the whole loop live in tabbed steps — **Stations & Data**
 (microtremor record → H/V curve per station), **Invert** (thickness nodes + Vs),
 **Report** (Vs cross-sections, bedrock-depth score, H/V fits) — plus an
 interactive **3-D Vs viewer** (stacked interfaces coloured by layer Vs, with the
-hidden true bedrock as an overlay) that rebuilds every evaluation.
+hidden true bedrock as an overlay) that rebuilds every evaluation. An optional
+**uncertainty ensemble** re-runs the inversion across independent noise
+realizations, starting models, smoothing strengths *and node resolutions* (the
+last is essential — resolution, not measurement noise, dominates HVSR
+non-uniqueness) and reports a per-cell bedrock-depth ±σ map; results export to
+JSON.
 
 **Benchmark** (3-layer basin, bedrock ≤ 140 m, 25 stations, Vs fixed at truth,
 5 % HVSR noise): bedrock-depth RMS 32 → 13 m, depth correlation **0.97**. HVSR

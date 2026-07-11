@@ -461,3 +461,16 @@ class HVSRInversion:
         xf = x0.copy()
         xf[self.free] = res.x * scf
         return xf, self.log
+
+
+def invert_member(args):
+    """Run one silent ensemble member (own noise realization of the observed
+    data + its own initial guess) and return the recovered bedrock-depth map.
+    Top-level and picklable so it can run in a ProcessPoolExecutor."""
+    (model, spec, xy, freqs, hv_obs, free, x0, max_thick, maxiter,
+     smooth_weight) = args
+    inv = HVSRInversion(model, spec, xy, freqs, hv_obs, free_mask=free,
+                        smooth_weight=smooth_weight)
+    xf, _ = inv.run(np.asarray(x0, float), max_thick=max_thick,
+                    maxiter=maxiter, verbose=False)
+    return model.interface_depths(xf)[-1]

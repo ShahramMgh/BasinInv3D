@@ -168,6 +168,9 @@
       <div id="layerbox" style="margin-top:6px"></div>
       <label class="chk"><input type="checkbox" id="bedrock_known">
         Bedrock depth known (boreholes) <span class="hint" title="Pins the bedrock interface to the true values and inverts only the shallower layers — the classic constraint that makes multi-layer HVSR well-posed.">?</span></label>
+      <label>Uncertainty ensemble <span class="hint" title="Number of inversions over independent noise realizations. >1 produces a bedrock-depth uncertainty (±σ) map. Adds runtime.">?</span></label>
+      <select id="ensemble"><option value="1" selected>off (1 run)</option>
+        <option value="3">3 runs</option><option value="5">5 runs</option><option value="8">8 runs</option></select>
       <div class="btnrow">
         <button class="act" id="run">▶ Run experiment</button>
         <button class="act" id="stop" disabled>■ Stop</button>
@@ -255,8 +258,10 @@
 
     <section class="panel" data-panel="report">
       <p class="lead"><b>Step 3 — Report.</b> Recovered Vs structure scored against
-        the hidden truth.</p>
+        the hidden truth. <button class="act" id="export" style="flex:none;padding:5px 12px;font-size:12px;background:var(--panel2);color:var(--ink2);border:1px solid var(--line);margin-left:8px">⭳ export JSON</button></p>
       <div class="imgs">
+        <div class="card imgcard wide hidden" id="c_uncertainty"><h2><span class="num">3</span>Bedrock-depth uncertainty (ensemble ±σ)</h2>
+          <img id="i_uncertainty"><div class="ph" id="ph_uncertainty">enable the uncertainty ensemble…</div></div>
         <div class="card imgcard wide" id="c_vs_sections"><h2><span class="num">3</span>Vs cross-sections — true vs inverted</h2>
           <img id="i_vs_sections"><div class="ph" id="ph_vs_sections">final figures…</div></div>
         <div class="card imgcard wide" id="c_depth_compare"><h2><span class="num">3</span>Bedrock depth — true · inverted · difference</h2>
@@ -387,14 +392,16 @@ let preset="fast";
 document.querySelectorAll(".pchip").forEach(c=>{c.onclick=()=>{preset=c.dataset.p;
   document.querySelectorAll(".pchip").forEach(x=>x.classList.toggle("sel",x===c));};});
 
+let lastStatus=null;
 function fmt(x,d=3){return(x==null)?"–":Number(x).toPrecision(d);}
 function setImg(name,v){const c=$("c_"+name);if(!c)return;
   const img=$("i_"+name),ph=$("ph_"+name);
   if(v&&img.dataset.v!==String(v)){img.dataset.v=String(v);img.src="/img/"+name+".png?v="+v;
-    img.classList.remove("hidden");if(ph)ph.classList.add("hidden");}}
+    img.classList.remove("hidden");c.classList.remove("hidden");if(ph)ph.classList.add("hidden");}}
 
 async function poll(){
   let s;try{s=await(await fetch("/api/status")).json();}catch(e){return;}
+  lastStatus=s;
   const pill=$("pill"),running=s.running;
   $("pilltx").textContent=s.stage;
   pill.className="pill "+(running?"running":(s.stage==="done"?"done":
@@ -415,7 +422,9 @@ async function poll(){
     $("t_rms_d").textContent="m · start "+Math.round(r[0]);
     $("t_rms").className="v"+(r[r.length-1]<0.6*r[0]?" good":(r[r.length-1]>r[0]?" warm":""));}
   if(s.result&&s.result.corr!=null){$("t_corr").textContent=s.result.corr.toFixed(2);
-    $("t_corr").className="v"+(s.result.corr>0.8?" good":(s.result.corr<0.4?" warm":""));}
+    $("t_corr").className="v"+(s.result.corr>0.8?" good":(s.result.corr<0.4?" warm":""));
+    $("t_corr_d").textContent=s.result.depth_std_median!=null
+      ?"±"+Math.round(s.result.depth_std_median)+" m (1σ)":"";}
   if(s.t_start){const el=s.result?s.result.elapsed:(running?Date.now()/1000-s.t_start:null);
     if(el!=null){$("t_time").textContent=el>90?Math.floor(el/60)+"m"+String(Math.round(el%60)).padStart(2,"0"):Math.round(el)+"s";
       $("t_time_d").textContent=s.result?s.result.n_evals+" evals":"";}}
@@ -425,7 +434,7 @@ async function poll(){
       $("badge").textContent=s.stage==="data"?"true basin (hidden from inversion)":
         (s.stage==="done"?"inverted Vs structure · final":"inverted Vs structure · live");}}
 
-  ["stations","microtremor","hvsr_fit","live_vs","convergence","vs_sections","depth_compare"]
+  ["stations","microtremor","hvsr_fit","live_vs","convergence","vs_sections","depth_compare","uncertainty"]
     .forEach(n=>setImg(n,(s.images||{})[n]));
   const hv=(s.images||{}).hvsr_fit;
   if(hv&&$("i_hvsr_fit2").dataset.v!==String(hv)){$("i_hvsr_fit2").dataset.v=String(hv);
@@ -446,11 +455,20 @@ $("run").onclick=async()=>{
   const nL=+$("n_layers").value,vs=[],fix=[];
   for(let L=0;L<nL;L++){vs.push(+$("vs"+L).value);fix.push($("fx"+L).checked);}
   const body={preset,seed:$("seed").value,noise_pct:$("noise_pct").value,
-    n_layers:nL,vs_true:vs,fix_vs:fix,bedrock_known:$("bedrock_known").checked};
+    n_layers:nL,vs_true:vs,fix_vs:fix,bedrock_known:$("bedrock_known").checked,
+    ensemble:+$("ensemble").value};
+  ["uncertainty"].forEach(n=>{$("c_"+n).classList.add("hidden");});
   await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   showTab("data");poll();
 };
 $("stop").onclick=()=>fetch("/api/stop",{method:"POST"});
+$("export").onclick=()=>{
+  if(!lastStatus)return;
+  const out={config:lastStatus.config,result:lastStatus.result,
+    misfit:lastStatus.misfit,rms:lastStatus.rms};
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="microtremor_result.json";a.click();};
 poll();setInterval(poll,800);
 </script>
 </body>

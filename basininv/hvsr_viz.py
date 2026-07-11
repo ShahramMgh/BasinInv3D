@@ -142,6 +142,30 @@ def render_microtremor(ts, dt, path, station=0):
     fig.savefig(path, dpi=115); plt.close(fig)
 
 
+def render_uncertainty(grid, mean_depth, std_depth, true_depth, xy, path):
+    """Ensemble bedrock-depth uncertainty: mean, per-cell std (uncertainty),
+    and whether the truth sits within the ±2σ envelope."""
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.0), constrained_layout=True)
+    ext = [0, grid.x[-1], 0, grid.y[-1]]
+    vmax = max(mean_depth.max(), true_depth.max(), 1.0)
+    im0 = axes[0].imshow(mean_depth.T, origin="lower", extent=ext,
+                         cmap="viridis", vmin=0, vmax=vmax)
+    axes[0].set_title("Ensemble-mean bedrock depth")
+    fig.colorbar(im0, ax=axes[0], shrink=0.8, label="depth (m)")
+    im1 = axes[1].imshow(std_depth.T, origin="lower", extent=ext, cmap="magma",
+                         vmin=0)
+    axes[1].set_title("Depth uncertainty (±1σ)")
+    fig.colorbar(im1, ax=axes[1], shrink=0.8, label="σ depth (m)")
+    within = (np.abs(mean_depth - true_depth) <= 2 * std_depth + 1e-9)
+    axes[2].imshow(within.T, origin="lower", extent=ext, cmap="RdYlGn",
+                   vmin=0, vmax=1)
+    axes[2].set_title(f"Truth within ±2σ  ({100*within.mean():.0f}% of area)")
+    for ax in axes:
+        ax.scatter(xy[:, 0], xy[:, 1], c="k", s=8, alpha=0.5)
+        ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+    fig.savefig(path, dpi=120); plt.close(fig)
+
+
 def plot_convergence(misfits, path):
     fig, ax = plt.subplots(figsize=(6, 3.6), constrained_layout=True)
     ax.semilogy(np.arange(1, len(misfits) + 1), misfits, "o-", color="#a371f7")
