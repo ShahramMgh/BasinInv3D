@@ -153,3 +153,21 @@ def fit_nodes_to_map(param: BasinParameterization, zb):
     ix = np.clip(np.round(param.node_x / param.grid.dx).astype(int), 0, param.grid.nx - 1)
     iy = np.clip(np.round(param.node_y / param.grid.dx).astype(int), 0, param.grid.ny - 1)
     return zb[np.ix_(ix, iy)]
+
+
+def resample_params(param_from: BasinParameterization, x_from,
+                    param_to: BasinParameterization):
+    """Warm-start a finer parameterization from a coarser solution.
+
+    The coarse solution is expanded to its full interpolated depth map and
+    re-sampled at the finer control nodes, so the extra degrees of freedom
+    start on the coarse surface instead of a flat guess.  Sediment vs (if
+    present) is carried across unchanged.
+    """
+    zb = param_from.depth_map(x_from)               # full (nx, ny) surface
+    spl = RectBivariateSpline(param_from.grid.x, param_from.grid.y, zb,
+                              kx=min(3, param_from.grid.nx - 1),
+                              ky=min(3, param_from.grid.ny - 1))
+    nd = np.clip(spl(param_to.node_x, param_to.node_y), 0.0, None)
+    _, vs = param_from.unpack(x_from)
+    return param_to.pack(nd, vs if vs is not None else 0.0)

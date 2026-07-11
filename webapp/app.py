@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from basininv import (BasinParameterization, ElasticSolver3D, GridSpec,
-                      Materials, Survey, WaveformInversion, build_model,
+                      Materials, MultiscaleInversion, Survey, build_model,
                       forward_from_params, gaussian_basin, ricker)
 from basininv import viz
 
@@ -39,16 +39,53 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 RUN_DIR = os.path.join(ROOT, "run")
 os.makedirs(RUN_DIR, exist_ok=True)
 
+# ncx / ncx_min bracket the coarse-to-fine multiscale node schedule; maxiter is
+# the L-BFGS-B iteration budget *per scale*.
 PRESETS = {
     "fast": dict(nx=44, ny=44, nz=26, dx=32.0, f0=2.0, t_max=1.4,
-                 nshot_side=2, nrec_side=6, ncx=3, maxiter=8, workers=3,
-                 seed=1, vs_true=400.0, vs_init=550.0, init_depth_frac=0.15,
-                 noise_pct=0.0, margin=13),
+                 nshot_side=2, nrec_side=6, ncx=3, ncx_min=2, maxiter=6,
+                 workers=3, seed=1, vs_true=400.0, vs_init=550.0,
+                 init_depth_frac=0.15, noise_pct=0.0, margin=13),
     "standard": dict(nx=60, ny=60, nz=36, dx=25.0, f0=2.4, t_max=2.2,
-                     nshot_side=2, nrec_side=7, ncx=3, maxiter=14, workers=3,
-                     seed=1, vs_true=400.0, vs_init=550.0,
+                     nshot_side=2, nrec_side=8, ncx=4, ncx_min=3, maxiter=8,
+                     workers=3, seed=1, vs_true=400.0, vs_init=550.0,
                      init_depth_frac=0.15, noise_pct=0.0, margin=15),
+    "high": dict(nx=72, ny=72, nz=42, dx=20.0, f0=2.6, t_max=2.6,
+                 nshot_side=3, nrec_side=9, ncx=5, ncx_min=3, maxiter=10,
+                 workers=3, seed=1, vs_true=400.0, vs_init=550.0,
+                 init_depth_frac=0.15, noise_pct=0.0, margin=16),
 }
+
+# smoothing relaxes geometrically from coarse (strong) to fine (weak) scale
+_SMOOTH_HI, _SMOOTH_LO = 2.5e-2, 3e-3
+
+
+def build_schedule(ncx_min, ncx_max, iters):
+    ncs = list(range(max(2, ncx_min), max(2, ncx_max) + 1)) or [ncx_max]
+    stages = []
+    for i, nc in enumerate(ncs):
+        frac = i / max(1, len(ncs) - 1)
+        sw = _SMOOTH_HI * (_SMOOTH_LO / _SMOOTH_HI) ** frac
+        stages.append((nc, nc, sw, int(iters)))
+    return stages
+
+
+def _surf3d(grid, zb_true, zb_inv=None, target=30):
+    """Coarse, JSON-friendly interface payload for the live in-browser 3D view.
+    Depths are positive-down in metres; the client renders z = -depth."""
+    step = max(1, grid.nx // target, grid.ny // target)
+    xs = grid.x[::step]
+    ys = grid.y[::step]
+    out = {"x": [round(float(v), 1) for v in xs],
+           "y": [round(float(v), 1) for v in ys],
+           "true": [[round(float(v), 1) for v in row]
+                    for row in zb_true[::step, ::step]],
+           "max_depth": float(max(zb_true.max(), 1.0))}
+    if zb_inv is not None:
+        out["inv"] = [[round(float(v), 1) for v in row]
+                      for row in zb_inv[::step, ::step]]
+        out["max_depth"] = float(max(zb_true.max(), zb_inv.max(), 1.0))
+    return out
 
 _LOCK = threading.Lock()
 
@@ -58,7 +95,8 @@ def _fresh_state():
         "running": False, "stop": False, "stage": "idle", "stage_note": "",
         "progress": 0.0, "log": [], "misfit": [], "rms": [],
         "images": {}, "result": None, "error": None, "config": None,
-        "t_start": None,
+        "t_start": None, "surf3d": None, "stage_idx": 0, "n_stages": 1,
+        "vs_now": None,
     }
 
 
@@ -129,6 +167,7 @@ def pipeline(cfg):
                                 f0=cfg["f0"], t_max=cfg["t_max"])
         viz.render_model_summary(grid, zb_true, survey, mat_true,
                                  os.path.join(RUN_DIR, "model.png"))
+        set_state(surf3d=_surf3d(grid, zb_true))
         bump("model")
         log(f"grid {grid.nx}x{grid.ny}x{grid.nz} (dx={grid.dx:.0f} m), "
             f"max depth {zb_true.max():.0f} m, "
@@ -184,35 +223,45 @@ def pipeline(cfg):
         _check_stop()
 
         # --------------------------------------------------- 3. invert
-        set_state(stage="invert", stage_note="starting L-BFGS-B", progress=0.0)
-        ncx = ncy = cfg["ncx"]
-        param = BasinParameterization(grid, ncx=ncx, ncy=ncy,
-                                      margin_cells=margin)
+        set_state(stage="invert", stage_note="starting multiscale L-BFGS-B",
+                  progress=0.0)
         max_depth = 0.80 * grid.nz * grid.dx
-        x0 = param.pack(np.full((ncx, ncy),
-                                cfg["init_depth_frac"] * max_depth),
-                        cfg["vs_init"])
-        zb_init = param.depth_map(x0)
+        schedule = build_schedule(cfg.get("ncx_min", 3), cfg["ncx"],
+                                  cfg["maxiter"])
+        set_state(n_stages=len(schedule))
+        # coarsest parameterization only to report the initial (flat) guess
+        p0 = BasinParameterization(grid, ncx=schedule[0][0], ncy=schedule[0][1],
+                                   margin_cells=margin)
+        x0 = p0.pack(np.full((schedule[0][0], schedule[0][1]),
+                             cfg["init_depth_frac"] * max_depth), cfg["vs_init"])
+        zb_init = p0.depth_map(x0)
         rms0 = float(np.sqrt(np.mean((zb_init - zb_true) ** 2)))
-        log(f"unknowns: {param.n_params} ({ncx}x{ncy} depth nodes + vs); "
-            f"initial RMS depth error {rms0:.1f} m")
+        log("multiscale schedule: " + " -> ".join(
+            f"{s[0]}x{s[1]}(sw={s[2]:.1g})" for s in schedule) +
+            f"; initial RMS depth error {rms0:.1f} m")
 
         mat_inv = Materials()   # bedrock known, sediment vs from params
-        inv = WaveformInversion(survey, param, d_obs, mat_inv,
-                                workers=cfg["workers"])
-        maxiter = cfg["maxiter"]
+        # total gradient evals across all scales, for a smooth global progress bar
+        evals_total = sum(s[3] + 1 for s in schedule)
+        eval_count = [0]
 
-        def on_forward(done, total):
+        def on_stage(i, n, param):
+            set_state(stage_idx=i,
+                      stage_note=f"scale {i + 1}/{n}: {param.ncx}x{param.ncy} "
+                                 f"nodes ({param.n_params} unknowns)")
+            log(f"scale {i + 1}/{n}: {param.ncx}x{param.ncy} control nodes, "
+                f"{param.n_params} unknowns")
+
+        def on_forward(i, done, total):
             _check_stop()
-            k = len(inv.log.misfit)
-            set_state(progress=min(1.0, (k + done / total) / (maxiter + 1)),
-                      stage_note=f"gradient eval {k + 1}: "
-                                 f"forward {done}/{total}")
+            frac = (eval_count[0] + done / total) / max(1, evals_total)
+            set_state(progress=min(1.0, frac))
 
-        def on_eval(k, f, x):
+        def on_eval(i, param, k, f, x):
             zb_cur = param.depth_map(x)
             rms = float(np.sqrt(np.mean((zb_cur - zb_true) ** 2)))
             _, vs_cur = param.unpack(x)
+            eval_count[0] += 1
             with _LOCK:
                 STATE["misfit"].append(float(f))
                 STATE["rms"].append(rms)
@@ -221,24 +270,30 @@ def pipeline(cfg):
                                       os.path.join(RUN_DIR, "inversion.png"))
             viz.plot_convergence(mis,
                                  os.path.join(RUN_DIR, "convergence.png"))
+            set_state(surf3d=_surf3d(grid, zb_true, zb_cur), vs_now=float(vs_cur),
+                      progress=min(1.0, eval_count[0] / max(1, evals_total)))
             bump("inversion")
             bump("convergence")
-            log(f"eval {k}: misfit {f:.4e}, RMS depth {rms:.1f} m, "
-                f"vs {vs_cur:.0f} m/s")
+            log(f"  scale {i + 1} eval {k}: misfit {f:.4e}, "
+                f"RMS depth {rms:.1f} m, vs {vs_cur:.0f} m/s")
             _check_stop()
 
+        inv = MultiscaleInversion(survey, grid, d_obs, mat_inv, schedule,
+                                  margin_cells=margin, max_depth=max_depth,
+                                  workers=cfg["workers"])
+        inv.on_stage = on_stage
         inv.on_forward = on_forward
         inv.on_eval = on_eval
-        res, ilog = inv.run(x0, max_depth=max_depth, maxiter=maxiter,
-                            verbose=False)
+        param, x_final = inv.run(x0, vs_init=cfg["vs_init"])
+        n_evals = eval_count[0]
         _check_stop()
 
         # --------------------------------------------------- 4. report
         set_state(stage="report", stage_note="final figures", progress=0.0)
-        zb_inv = param.depth_map(res.x)
-        _, vs_inv = param.unpack(res.x)
+        zb_inv = param.depth_map(x_final)
+        _, vs_inv = param.unpack(x_final)
         rms = float(np.sqrt(np.mean((zb_inv - zb_true) ** 2)))
-        d_syn = forward_from_params(survey, param, res.x, mat_inv,
+        d_syn = forward_from_params(survey, param, x_final, mat_inv,
                                     workers=cfg["workers"])
         dt = survey.t_max / d_obs.shape[-1]
         viz.plot_depth_maps(grid, zb_true, zb_inv, zb_init,
@@ -248,15 +303,18 @@ def pipeline(cfg):
                               os.path.join(RUN_DIR, "interface_3d.png"))
         viz.plot_seismograms(d_obs, d_syn, dt,
                              path=os.path.join(RUN_DIR, "seismograms.png"))
+        set_state(surf3d=_surf3d(grid, zb_true, zb_inv), vs_now=float(vs_inv))
         for n in ("depth_maps", "interface_3d", "seismograms"):
             bump(n)
 
         with _LOCK:
             mis0 = STATE["misfit"][0] if STATE["misfit"] else None
         result = dict(
-            misfit0=mis0, misfit=float(res.fun), rms0=rms0, rms=rms,
+            misfit0=mis0, misfit=float(STATE["misfit"][-1]) if STATE["misfit"]
+            else None, rms0=rms0, rms=rms,
             vs_true=cfg["vs_true"], vs_inv=float(vs_inv),
-            n_evals=len(ilog.misfit), elapsed=time.time() - t_all,
+            n_evals=n_evals, elapsed=time.time() - t_all,
+            nodes=f"{param.ncx}x{param.ncy}",
             max_depth_true=float(zb_true.max()),
             max_depth_inv=float(zb_inv.max()))
         set_state(stage="done", stage_note="", progress=1.0, result=result)

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import minimize
 
-from .basin import BasinParameterization, Materials
+from .basin import BasinParameterization, Materials, resample_params
 from .survey import Survey, forward_from_params
 
 # ------------------------------------------------------------------ workers
@@ -165,3 +165,79 @@ class WaveformInversion:
         finally:
             self.close()
         return res, self.log
+
+
+@dataclass
+class MultiscaleStage:
+    ncx: int
+    ncy: int
+    smooth_weight: float
+    maxiter: int
+
+
+class MultiscaleInversion:
+    """Coarse-to-fine geometry inversion.
+
+    Solves the basin geometry on a sequence of increasingly fine control-node
+    grids, warm-starting each stage from the previous solution and relaxing the
+    roughness penalty as resolution grows.  A coarse strongly-smoothed stage
+    locks in the large-scale basin shape (avoiding checkerboard minima), then
+    finer weakly-smoothed stages add detail — recovering the central depth that
+    a single coarse grid leaves too shallow, without introducing artifacts.
+
+    The hooks mirror :class:`WaveformInversion` but always report the *active*
+    parameterization so callers can map parameters -> depth without tracking the
+    schedule themselves:
+
+        on_stage(i, nstages, param)         when a stage begins
+        on_eval(i, param, k, misfit, x)     after every gradient evaluation
+        on_forward(i, done, total)          as one gradient's forwards finish
+    """
+
+    def __init__(self, survey: Survey, grid, d_obs, mat: Materials,
+                 stages, margin_cells, max_depth, workers=4, invert_vs=True):
+        self.survey = survey
+        self.grid = grid
+        self.d_obs = d_obs
+        self.mat = mat
+        self.stages = [s if isinstance(s, MultiscaleStage) else MultiscaleStage(*s)
+                       for s in stages]
+        self.margin_cells = margin_cells
+        self.max_depth = max_depth
+        self.workers = workers
+        self.invert_vs = invert_vs
+        self.on_stage = None
+        self.on_eval = None
+        self.on_forward = None
+        self.history = []          # (param, x) per stage
+
+    def run(self, x0, vs_init):
+        x = None
+        param = None
+        for i, st in enumerate(self.stages):
+            new_param = BasinParameterization(
+                self.grid, ncx=st.ncx, ncy=st.ncy,
+                margin_cells=self.margin_cells, invert_vs=self.invert_vs)
+            if x is None:
+                x_start = x0 if x0 is not None else new_param.pack(
+                    np.zeros((st.ncx, st.ncy)), vs_init)
+            else:
+                x_start = resample_params(param, x, new_param)
+            param = new_param
+            if self.on_stage is not None:
+                self.on_stage(i, len(self.stages), param)
+
+            inv = WaveformInversion(self.survey, param, self.d_obs, self.mat,
+                                    smooth_weight=st.smooth_weight,
+                                    workers=self.workers)
+            if self.on_forward is not None:
+                inv.on_forward = (lambda i=i: (
+                    lambda done, total: self.on_forward(i, done, total)))()
+            if self.on_eval is not None:
+                inv.on_eval = (lambda i=i, param=param: (
+                    lambda k, f, xx: self.on_eval(i, param, k, f, xx)))()
+            res, _ = inv.run(x_start, max_depth=self.max_depth,
+                             maxiter=st.maxiter, verbose=False)
+            x = res.x
+            self.history.append((param, x))
+        return param, x
