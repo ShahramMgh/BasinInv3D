@@ -57,6 +57,18 @@ Outputs (data + figures) land in `outputs/` (CLI) or `webapp/run/` (studio).
 Use `/usr/bin/python3` (has NumPy/SciPy/matplotlib); the anaconda env lacks
 matplotlib.
 
+## Validation status (2026-07)
+
+Quick-demo benchmark (50x50x30 grid, two-bump basin 519 m deep, 4 shots,
+36 receivers, 10 unknowns, flat 101 m / vs=550 initial guess):
+misfit 0.52 -> 0.021, sediment vs recovered 395 m/s (true 400), RMS depth
+error 120 -> 91 m, no checkerboard. Remaining depth deficit at basin center
+is the regularization/resolution trade-off: `smooth_weight=1e-2` suppresses
+node oscillation but also flattens the deepest part, and a 3x3 node grid
+cannot represent two bumps that fall between nodes. Next lever: multiscale
+(invert 3x3 with strong smoothing, then refine to 4x4/5x5 with weaker
+smoothing, warm-started).
+
 ## Notes / upgrade path
 
 - FD gradients cost one multi-shot forward per parameter; fine for ~10–30
