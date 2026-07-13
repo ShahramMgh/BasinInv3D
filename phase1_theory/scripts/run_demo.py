@@ -30,7 +30,7 @@ def main():
     ap.add_argument("--maxiter", type=int, default=12)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__),
-                                                  "..", "..", "outputs"))
+                                                  "..", "outputs"))
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 

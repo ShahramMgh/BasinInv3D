@@ -8,7 +8,7 @@ any code via basininv.fieldio.  A truth.npz is included so a validation run
 can be scored — the inversion itself never reads it.
 
 Usage:
-    python3 scripts/make_field_demo.py [outputs/field_demo] [--seed 2]
+    python3 phase2_toolbox/scripts/make_field_demo.py [folder] [--seed 2]
         [--layers 3] [--side 5] [--noise 5]
 """
 import argparse
@@ -22,7 +22,9 @@ from basininv.fieldio import make_demo_campaign
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("folder", nargs="?", default="outputs/field_demo")
+    default_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "outputs", "field_demo")
+    ap.add_argument("folder", nargs="?", default=default_folder)
     ap.add_argument("--seed", type=int, default=2)
     ap.add_argument("--layers", type=int, default=3)
     ap.add_argument("--side", type=int, default=5,
@@ -38,8 +40,8 @@ def main():
     print(f"  {info['n_stations']} stations: {kinds}")
     print(f"  hidden truth: Vs {info['vs_true']}, "
           f"max bedrock depth {info['max_depth']:.0f} m")
-    print("open the studio (python3 webapp_mt/app.py), switch to "
-          "'Field assistant', scan this folder and press Run.")
+    print("open the field dashboard (python3 phase2_toolbox/webapp_field/app.py), "
+          "scan this folder and press Run.")
 
 
 if __name__ == "__main__":

@@ -217,7 +217,7 @@ formats, then treated exactly like field data (a bundled `truth.npz` lets the
 run score itself):
 
 ```bash
-python3 phase2_toolbox/scripts/make_field_demo.py outputs/field_demo   # or click '✚ Demo campaign' in the app
+python3 phase2_toolbox/scripts/make_field_demo.py   # writes phase2_toolbox/outputs/field_demo; or click '✚ Demo campaign' in the app
 ```
 
 End-to-end on the demo campaign (25 stations, 328 s records, 3 layers, Vs
@@ -247,7 +247,8 @@ python3 phase1_theory/scripts/run_demo.py           # larger run (hours)
 python3 phase1_theory/scripts/run_noise_demo.py     # ambient-noise H/V across the basin
 ```
 
-CLI outputs (data + figures) land in `outputs/`; each studio writes its
+CLI outputs (data + figures) land in each phase's own `outputs/` directory
+(`phase1_theory/outputs/`, `phase2_toolbox/outputs/`); each studio writes its
 figures to its own `run/` directory.
 
 ## Project structure
