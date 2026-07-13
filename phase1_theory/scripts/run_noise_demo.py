@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -30,7 +30,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--duration", type=float, default=8.0)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__),
-                                                  "..", "outputs"))
+                                                  "..", "..", "outputs"))
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 

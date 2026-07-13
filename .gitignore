@@ -1,5 +1,4 @@
 outputs/
 __pycache__/
 *.pyc
-webapp/run/
-webapp_mt/run/
+run/

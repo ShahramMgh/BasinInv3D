@@ -176,7 +176,84 @@ residual is *representation bias* (a coarse grid cannot fit the sharp centre),
 not variance, so a noise-only ensemble is badly over-confident (σ ≈ 1 m vs
 ≈10 m error). Members run in a process pool.
 
-## 6. Validation summary
+## 6. Field assistant: real recordings → basin structure
+
+The field-facing layer on top of §5 (`basininv/hvproc.py`,
+`basininv/fieldio.py`, Field-assistant mode of `webapp_mt/`): instead of
+synthesising observations internally, the studio reads a **campaign folder**
+of recordings and inverts whatever it finds.
+
+**Campaign format (`fieldio`).** `stations.csv` (id, x, y in local metric
+coordinates) plus one file per station: a raw 3-component record (`.npz` with
+`data (3, nt)` as [N, E, Z] and `dt`; `.csv` with a `# dt=` header; miniSEED/
+SAC via obspy when installed) *or* an already-processed `.hv` curve
+(`freq hv [sigma]`). Kinds mix freely — recycled curves from earlier surveys
+sit next to new recordings. `make_demo_campaign` writes an *imaginary*
+campaign in exactly this format (records synthesised from a hidden layered
+basin, §5's `synth_microtremor`), so the identical code path runs with or
+without real data; its `truth.npz` is read only to score validation runs.
+
+**Processing chain (`hvproc`).** The standard microtremor reduction, fully
+parameterised: overlapping cosine-tapered windows (default 40 s / 50 %);
+STA/LTA **anti-trigger** rejection of transient-contaminated windows;
+per-window FFT + **Konno–Ohmachi** smoothing (b = 40) onto a log frequency
+grid; geometric (or quadratic) horizontal merge; H/V per window; log-mean
+curve with a per-frequency multiplicative σ; f₀ per window by parabolic
+refinement in log f, giving f₀ ± σ(f₀). The **SESAME (2004)** criteria are
+evaluated per station: 3 curve-reliability conditions (enough cycles, enough
+windows, bounded scatter) and the 6 clear-peak conditions (troughs on both
+sides, amplitude > 2, peak stability under ±σ, f₀ and amplitude scatter below
+the frequency-dependent thresholds). Failing stations are flagged in the QC
+panel and can be excluded from the inversion.
+
+**Inversion adaptation.** The inversion grid is built from the station
+bounding box (44×44 cells + 7-cell margin; depth extent auto-estimated from
+the lowest measured f₀ via H ≈ Vs/4f₀, overridable). Curves are log-log
+interpolated onto the inversion band and passed to §5's `HVSRInversion`
+unchanged; convergence is reported as the **median |log f₀ residual|**, since
+no truth exists. The uncertainty ensemble replaces synthetic noise
+re-realisations with perturbations of each curve **within its measured window
+scatter** (per-station, per-frequency σ from processing), on top of the
+varied start model, smoothing and node resolution of §5.
+
+**Depth constraints from other geophysics.** Any point with an externally
+known or interpreted interface depth — borehole logs, resistivity soundings,
+GPR picks, mapped outcrops — adds a term to the misfit:
+
+    C(m) = w_c · ⟨ w_i · ((z_Li(x_i, y_i; m) − d_i) / max(d_i, 10))² ⟩
+
+over constraint points i, where `z_L` is the modelled depth of the target
+interface (any sediment interface or the bedrock) at the point.  The relative
+form makes a 5 m miss at a 20 m borehole count like a 25 m miss at 100 m.
+Constraints enter the ensemble members too.  How exactly a constraint is
+honoured is limited by the thickness-node resolution — a coarse 3×3 grid
+cannot bend to a single borehole on a steep flank (residuals of tens of
+metres there are representation, not weighting); more nodes and weaker
+smoothing tighten it.  Constraints are strong medicine both ways: a wrong
+depth (validated deliberately with a fake 5 m "outcrop" over the basin
+centre) visibly degrades the whole model, which is why the dashboard shows
+per-constraint residuals and lets each point be toggled.
+
+**Field Dashboard (`webapp_field/`).** The map-oriented front end on top of
+all of the above: datasets are uploaded from the browser into a persistent
+project workspace; stations and auxiliary points live on an OSM map (WGS84
+lat/lon ↔ local metres via an equirectangular projection around the survey
+anchor — sub-metre over survey extents); per-point configuration and manual
+enrichment (attributes, fixed depths, exclusions, new points) feed directly
+into `_collect_inputs`; the recovered depth / ±σ rasters are rendered as
+georeferenced RGBA overlays with live updates each optimizer evaluation.
+The final model is persisted (`results.json`) and rebuildable, powering an
+in-browser 3-D basin view (stacked interfaces + stations, live during the
+run), map-drawn Vs cross-sections, click-anywhere 1-D layer columns, and a
+`lat,lon,depth` grid export for GIS.
+
+**Verified end-to-end** (demo campaign: 25 stations, 328 s records at
+dt = 0.01 written to disk, 3 layers, Vs fixed): records → H/V (curves match
+the theoretical transfer-function H/V to ~5 % median in-band; all stations
+pass SESAME) → inversion recovers the hidden bedrock with RMS ≈ 15 m,
+correlation 0.95–0.96, final median f₀ residual ≈ 5 %.
+
+## 7. Validation summary
 
 - **Solver smoke test**: stability (no growth over the run), free-surface
   sanity, and a 98% relative record difference between basin and halfspace
@@ -194,6 +271,9 @@ not variance, so a noise-only ensemble is badly over-confident (σ ≈ 1 m vs
 - **Uncertainty ensemble** (same case): resolution-varying members give a
   bedrock σ ≈ 7 m with the truth inside ±2σ over ~50–68 % of the area, versus
   a falsely-confident σ ≈ 1 m for a noise-only ensemble.
+- **Field-assistant end-to-end** (demo campaign read from disk, §6): raw
+  records → SESAME-checked H/V → inversion; bedrock RMS ≈ 15 m,
+  correlation 0.95, median f₀ residual ≈ 5 %.
 
 ## References
 

@@ -9,6 +9,9 @@ from .hvsr import (HVSRInversion, LayerSpec, MultiLayerBasin, hvsr_curve,
                    fundamental_frequency, soft_peak, make_true_basin,
                    observed_hvsr, initial_guess, station_lattice,
                    sample_true_columns, synth_microtremor)
+from .hvproc import HVResult, ProcConfig, process_record
+from .fieldio import (load_station, load_truth, make_demo_campaign,
+                      scan_campaign)
 
 __all__ = [
     "BasinParameterization", "GridSpec", "Materials", "build_model",
@@ -19,4 +22,6 @@ __all__ = [
     "fundamental_frequency", "soft_peak", "make_true_basin", "observed_hvsr",
     "initial_guess", "station_lattice", "sample_true_columns",
     "synth_microtremor",
+    "HVResult", "ProcConfig", "process_record",
+    "load_station", "load_truth", "make_demo_campaign", "scan_campaign",
 ]

@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Dashboard · BasinInv3D</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e;
+    --muted:#898781; --grid:#e1e0d9; --base:#c3c2b7;
+    --border:rgba(11,11,11,.10); --accent:#2a78d6; --accent-deep:#1c5cab;
+    --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+    --c-hvsr:#2a78d6; --c-borehole:#eb6834; --c-resistivity:#4a3aa7;
+    --c-gpr:#1baf7a; --c-manual:#e87ba4; --c-other:#eda100;
+    --shadow:0 1px 4px rgba(11,11,11,.08),0 4px 14px rgba(11,11,11,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--page);color:var(--ink);
+    font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+    display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:12px;padding:10px 18px;
+    background:var(--surface);border-bottom:1px solid var(--grid);z-index:1001}
+  .logo{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),#6da7ec);color:#fff;font-size:15px}
+  header h1{font-size:15.5px;font-weight:680}
+  header .sub{font-size:11.5px;color:var(--muted)}
+  .pill{margin-left:auto;padding:4px 14px;border-radius:999px;font-size:12px;
+    font-weight:640;border:1px solid var(--grid);color:var(--ink2);
+    display:flex;align-items:center;gap:7px;text-transform:capitalize}
+  .pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--base)}
+  .pill.running{color:#946200;border-color:#e8c476}
+  .pill.running::before{background:var(--warn);animation:pulse 1.1s infinite}
+  .pill.done{color:var(--good);border-color:#9fd89f}.pill.done::before{background:var(--good)}
+  .pill.error,.pill.stopped{color:var(--crit);border-color:#eba3a3}
+  .pill.error::before,.pill.stopped::before{background:var(--crit)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  button{font:inherit;cursor:pointer}
+  .btn{padding:8px 16px;border-radius:8px;border:1px solid var(--grid);
+    background:var(--surface);color:var(--ink2);font-size:13px;font-weight:600}
+  .btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent-deep)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover:not(:disabled){background:var(--accent-deep);color:#fff}
+  .btn.danger{color:var(--crit)}
+  .btn.danger:hover:not(:disabled){border-color:var(--crit);color:var(--crit)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.small{padding:5px 10px;font-size:12px}
+
+  #main{flex:1;display:flex;min-height:0}
+  #mapwrap{flex:1;position:relative;min-width:0}
+  #map{position:absolute;inset:0;background:#e8ecef}
+  .mapctl{position:absolute;z-index:900;background:var(--surface);
+    border:1px solid var(--grid);border-radius:10px;box-shadow:var(--shadow);
+    padding:10px 12px;font-size:12px;color:var(--ink2)}
+  #ovlctl{top:12px;right:12px;min-width:190px;display:none}
+  #ovlctl .row{display:flex;align-items:center;gap:7px;margin:4px 0}
+  #ovlctl input[type=range]{flex:1;accent-color:var(--accent)}
+  #ovlctl img{width:100%;margin-top:4px}
+  #maplegend{bottom:22px;left:12px;line-height:1.7}
+  #maplegend .shape{display:inline-block;width:13px;text-align:center;margin-right:6px}
+  #f0bar{width:110px;height:9px;border-radius:3px;display:inline-block;vertical-align:middle;
+    background:linear-gradient(90deg,#cde2fb,#6da7ec,#2a78d6,#1c5cab,#0d366b)}
+  #addhint{top:12px;left:50%;transform:translateX(-50%);display:none;
+    background:#fff8e6;border-color:#e8c476;color:#946200;font-weight:600}
+  #toolcol{top:90px;left:12px;padding:6px;display:flex;flex-direction:column;gap:6px}
+  #toolcol .btn{padding:6px 10px;font-size:12px;white-space:nowrap}
+  #toolcol .btn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  #view3d{position:absolute;inset:0;z-index:950;display:none;
+    background:radial-gradient(120% 120% at 50% 15%,#ffffff,#e8ebee 75%)}
+  #view3d.show{display:block}
+  #cv3{width:100%;height:100%;display:block;cursor:grab}
+  #cv3.drag{cursor:grabbing}
+  #v3ctl{position:absolute;top:12px;right:12px;background:var(--surface);
+    border:1px solid var(--grid);border-radius:10px;box-shadow:var(--shadow);
+    padding:10px 12px;font-size:12px;color:var(--ink2);width:180px}
+  #v3ctl .chk{margin:4px 0}
+  #v3ctl input[type=range]{width:100%;accent-color:var(--accent)}
+  #v3legend{position:absolute;left:12px;bottom:16px;background:var(--surface);
+    border:1px solid var(--grid);border-radius:10px;box-shadow:var(--shadow);
+    padding:9px 12px;font-size:12px;color:var(--ink2)}
+  #v3legend .lg{display:flex;align-items:center;gap:7px;margin:2px 0}
+  #v3legend .sw{width:13px;height:13px;border-radius:3px}
+  #v3badge{position:absolute;left:12px;top:12px;font-size:12px;color:var(--ink2);
+    background:var(--surface);border:1px solid var(--grid);border-radius:8px;
+    padding:5px 11px;box-shadow:var(--shadow)}
+  #secpanel{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);
+    z-index:960;background:var(--surface);border:1px solid var(--grid);
+    border-radius:12px;box-shadow:var(--shadow);padding:12px;display:none;
+    width:min(78%,820px)}
+  #secpanel img{width:100%;border-radius:8px}
+  #secpanel .x{position:absolute;top:6px;right:10px;border:none;background:none;
+    font-size:17px;color:var(--muted)}
+  #secpanel .x:hover{color:var(--crit)}
+  .profTable{border-collapse:collapse;font-size:12px;min-width:190px}
+  .profTable td{padding:2px 7px;border-bottom:1px solid var(--grid)}
+  .profTable td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+
+  #split{width:6px;flex:none;cursor:col-resize;background:var(--page);
+    border-left:1px solid var(--grid);border-right:1px solid var(--grid)}
+  #split:hover,#split.on{background:var(--accent)}
+  aside{width:520px;min-width:360px;max-width:900px;background:var(--surface);
+    display:flex;flex-direction:column;min-height:0;flex:none}
+  .tabs{display:flex;border-bottom:1px solid var(--grid)}
+  .tab{flex:1;padding:11px 4px;text-align:center;font-size:12.5px;font-weight:640;
+    color:var(--muted);border:none;background:none;border-bottom:2px solid transparent}
+  .tab:hover{color:var(--ink2)}
+  .tab.sel{color:var(--accent-deep);border-bottom-color:var(--accent)}
+  .tabbody{flex:1;overflow-y:auto;padding:14px 16px 24px;display:none}
+  .tabbody.show{display:block}
+  h3{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--muted);margin:18px 0 8px}
+  h3:first-child{margin-top:2px}
+  .card{background:var(--page);border:1px solid var(--grid);border-radius:10px;
+    padding:12px;margin-bottom:10px}
+  label{display:block;font-size:11.5px;color:var(--ink2);margin:8px 0 3px;font-weight:600}
+  input,select,textarea{width:100%;background:var(--surface);color:var(--ink);
+    border:1px solid var(--base);border-radius:7px;padding:6px 8px;font-size:13px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 3px rgba(42,120,214,.13)}
+  input[type=checkbox]{width:auto;accent-color:var(--accent)}
+  .chk{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);
+    margin:8px 0;font-weight:500}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 10px}
+  .hint{color:var(--muted);cursor:help;border:1px solid var(--base);border-radius:50%;
+    width:14px;height:14px;font-size:9.5px;display:inline-grid;place-items:center;
+    vertical-align:1px;margin-left:3px}
+  .muted{color:var(--muted);font-size:12px}
+  .dsrow{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--grid);
+    border-radius:9px;margin-bottom:7px;background:var(--surface);cursor:pointer}
+  .dsrow:hover{border-color:var(--accent)}
+  .dsrow .dot{width:11px;height:11px;border-radius:3px;flex:none}
+  .dsrow .nm{font-weight:640;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .dsrow .meta{font-size:11px;color:var(--muted);white-space:nowrap}
+  .dsrow .del{border:none;background:none;color:var(--muted);font-size:15px;padding:0 2px}
+  .dsrow .del:hover{color:var(--crit)}
+  .chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
+    font-weight:640;border:1px solid var(--grid);color:var(--ink2);margin:0 4px 4px 0}
+  .chip.ok{color:var(--good);border-color:#9fd89f;background:#f2fbf2}
+  .chip.bad{color:var(--crit);border-color:#eba3a3;background:#fdf3f3}
+  .chip.wn{color:#946200;border-color:#e8c476;background:#fff8e6}
+  .kv{width:100%;border-collapse:collapse;font-size:12.5px}
+  .kv td{padding:4px 4px;border-bottom:1px solid var(--grid);vertical-align:middle}
+  .kv td:first-child{color:var(--ink2);font-weight:600;width:42%}
+  .kv input{padding:4px 6px;font-size:12.5px}
+  .kv .rm{border:none;background:none;color:var(--muted);padding:0 4px}
+  .kv .rm:hover{color:var(--crit)}
+  .layerrow{display:grid;grid-template-columns:16px 1fr auto 22px;gap:8px;
+    align-items:center;margin:6px 0}
+  .layerrow .sw{width:14px;height:14px;border-radius:4px;border:1px solid var(--border)}
+  .layerrow .fx{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11.5px}
+  .layerrow .rm{border:none;background:none;color:var(--muted);font-size:15px}
+  .layerrow .rm:hover{color:var(--crit)}
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
+  .tile{background:var(--surface);border:1px solid var(--grid);border-radius:10px;
+    padding:10px 12px}
+  .tile .v{font-size:20px;font-weight:730;letter-spacing:-.4px}
+  .tile .v.good{color:var(--good)}
+  .tile .k{font-size:10.5px;color:var(--muted);margin-top:2px;text-transform:uppercase;
+    letter-spacing:.05em}
+  #curvebox img{width:100%;border-radius:8px;border:1px solid var(--grid)}
+  #convwrap{background:var(--surface);border:1px solid var(--grid);border-radius:10px;
+    padding:10px 6px 4px}
+  #convsvg{width:100%;height:130px;display:block}
+  #convtip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;
+    padding:4px 9px;border-radius:6px;font-size:11.5px;display:none;z-index:2000;
+    white-space:nowrap}
+  #log{background:#f4f4f1;border:1px solid var(--grid);border-radius:8px;padding:9px 11px;
+    max-height:190px;overflow-y:auto;font:11.5px/1.55 ui-monospace,Consolas,monospace;
+    color:var(--ink2);white-space:pre-wrap}
+  #err{color:var(--crit);font:11.5px ui-monospace,monospace;white-space:pre-wrap;
+    margin-top:8px;max-height:150px;overflow:auto}
+  .note{font-size:12px;color:var(--ink2);min-height:16px;margin:6px 0}
+  .bar{height:5px;background:var(--grid);border-radius:3px;overflow:hidden;margin:4px 0 2px}
+  .bar>div{height:100%;width:0;background:var(--accent);transition:width .4s}
+  .btnrow{display:flex;gap:8px;margin-top:10px}
+  .btnrow .btn{flex:1}
+  .linky{background:none;border:none;color:var(--accent-deep);font-size:12px;
+    text-decoration:underline;padding:2px 0}
+  .hidden{display:none!important}
+  details summary{cursor:pointer;font-size:12px;color:var(--ink2);font-weight:600;
+    margin:10px 0 6px}
+  .leaflet-container{font:inherit}
+  .stlbl{background:rgba(252,252,251,.88);border:1px solid var(--grid);
+    color:var(--ink2);font-size:10.5px;font-weight:600;padding:1px 5px;
+    border-radius:5px;box-shadow:none}
+  #presets .btn.on{border-color:var(--accent);color:var(--accent-deep);
+    background:rgba(42,120,214,.07)}
+  .chartcard{background:var(--surface);border:1px solid var(--grid);
+    border-radius:10px;padding:10px;margin-bottom:10px}
+  .chartcard .ch{font-size:12px;font-weight:650;color:var(--ink2);
+    margin-bottom:7px;display:flex;justify-content:space-between;gap:8px}
+  .chartcard img{width:100%;border-radius:6px;min-height:40px}
+  h3.clps{cursor:pointer;user-select:none}
+  h3.clps::before{content:"▾ ";color:var(--base)}
+  h3.clps.closed::before{content:"▸ "}
+  #ovlhead{cursor:pointer;user-select:none}
+  #ovlhead::after{content:" ▾";color:var(--base)}
+  #ovlctl.closed #ovlhead::after{content:" ▸"}
+  #ovlctl.closed #ovlbody{display:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">◈</div>
+  <div>
+    <h1>Field Dashboard <span class="sub" style="font-weight:500">· BasinInv3D</span></h1>
+    <div class="sub">microtremor surveys + geophysical constraints → 3D basin structure</div>
+  </div>
+  <span class="pill" id="pill"><span id="pilltx">idle</span></span>
+  <button class="btn primary" id="run">▶ Run inversion</button>
+  <button class="btn danger" id="stop" disabled>■ Stop</button>
+</header>
+
+<div id="main">
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div class="mapctl" id="ovlctl">
+      <div id="ovlhead" style="font-weight:700;font-size:11px;letter-spacing:.05em;color:var(--muted);text-transform:uppercase">Map overlays</div>
+      <div id="ovlbody">
+        <div class="row" id="depthrow"><label class="chk" style="margin:0"><input type="checkbox" id="showDepth" checked> bedrock depth</label></div>
+        <div class="row" id="sigmarow" style="display:none"><label class="chk" style="margin:0"><input type="checkbox" id="showSigma"> uncertainty ±σ</label></div>
+        <div class="row" id="vs30row" style="display:none"><label class="chk" style="margin:0"><input type="checkbox" id="showVs30"> Vs30 (site stiffness)</label></div>
+        <div class="row"><label class="chk" style="margin:0"><input type="checkbox" id="showF0"> measured f₀ (interpolated)</label></div>
+        <div class="row"><span class="muted">opacity</span><input type="range" id="ovlop" min="10" max="100" value="72"></div>
+        <img id="cbar" alt="">
+        <button class="btn small" id="zoomRes" style="width:100%;margin-top:6px">⌖ zoom to result</button>
+      </div>
+    </div>
+    <div class="mapctl" id="maplegend">
+      <div><span id="f0bar"></span> <span class="muted" id="f0rng">station f₀</span></div>
+      <div><span class="shape" style="color:var(--c-borehole)">■</span>borehole
+           <span class="shape" style="color:var(--c-resistivity);margin-left:8px">▲</span>resistivity
+           <span class="shape" style="color:var(--c-gpr);margin-left:8px">◆</span>GPR
+           <span class="shape" style="color:var(--c-manual);margin-left:8px)">★</span>manual/other</div>
+    </div>
+    <div class="mapctl" id="addhint">click on the map to place the new point — Esc to cancel</div>
+    <div class="mapctl" id="toolcol">
+      <button class="btn" id="btn3d" title="3D view of the inverted basin">⛰ 3D basin</button>
+      <button class="btn" id="btnSec" title="Draw a line on the map to get a Vs cross-section">✂ section</button>
+      <button class="btn" id="btnAdd" title="Place a manual point (outcrop, known depth…)">➕ point</button>
+      <button class="btn" id="btnLbl" title="Show station names on the map">🏷 labels</button>
+    </div>
+    <div id="view3d">
+      <canvas id="cv3"></canvas>
+      <div id="v3badge">inverted basin — drag to orbit · scroll to zoom</div>
+      <div id="v3ctl">
+        <div style="font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)">3D view</div>
+        <label class="chk"><input type="checkbox" id="v3spin" checked> auto-rotate</label>
+        <label class="chk"><input type="checkbox" id="v3explode"> explode layers</label>
+        <label class="chk"><input type="checkbox" id="v3sta" checked> show stations</label>
+        <div class="muted" style="margin-top:5px">vertical exaggeration</div>
+        <input type="range" id="v3ex" min="30" max="300" value="100">
+        <div class="btnrow" style="margin-top:8px">
+          <button class="btn small" id="v3reset">reset view</button>
+          <button class="btn small" id="v3close">back to map</button>
+        </div>
+      </div>
+      <div id="v3legend"></div>
+    </div>
+    <div id="secpanel">
+      <button class="x" id="secClose">×</button>
+      <div style="font-weight:650;font-size:12.5px;margin-bottom:7px">Vs cross-section
+        <a id="secDl" download="vs_section.png" class="linky" style="margin-left:10px">⭳ save PNG</a></div>
+      <img id="secimg" alt="section">
+    </div>
+  </div>
+
+  <div id="split" title="drag to resize the panel"></div>
+  <aside>
+    <div class="tabs">
+      <button class="tab sel" data-t="data">Data</button>
+      <button class="tab" data-t="point">Point</button>
+      <button class="tab" data-t="inv">Inversion</button>
+      <button class="tab" data-t="res">Results</button>
+      <button class="tab" data-t="charts">Charts</button>
+    </div>
+
+    <!-- ============================================================ DATA -->
+    <div class="tabbody show" data-t="data">
+      <h3>Load data</h3>
+      <div class="card">
+        <button class="btn" id="loadHvsr" style="width:100%">📡 Load HVSR survey folder…</button>
+        <div class="muted" style="margin-top:6px">A folder with <b>stations.csv</b>
+          (id, lat, lon — or x, y) plus one file per station: raw recordings
+          (<b>.npz</b> / <b>.csv</b> / <b>.mseed</b>) or processed <b>.hv</b> curves.</div>
+        <input type="file" id="hvsrPick" webkitdirectory multiple class="hidden">
+      </div>
+      <div class="card">
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="loadAux" style="flex:1">📍 Load points…</button>
+          <select id="auxType" style="width:130px">
+            <option value="borehole">boreholes</option>
+            <option value="resistivity">resistivity</option>
+            <option value="gpr">GPR</option>
+            <option value="geology">geology</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div class="muted" style="margin-top:6px">Any geophysical point data as CSV:
+          <b>id, lat, lon</b> + your columns. Depth-like columns (e.g.
+          <i>bedrock_depth</i>) are auto-wired as <b>inversion constraints</b> —
+          editable per point.</div>
+        <input type="file" id="auxPick" accept=".csv" class="hidden">
+      </div>
+      <button class="btn small" id="addPointBtn" style="width:100%">➕ Add a point manually on the map</button>
+      <div class="note" id="loadnote"></div>
+
+      <h3>Datasets</h3>
+      <div id="dslist"><div class="muted">nothing loaded yet — load a survey
+        folder, or try the <button class="linky" id="demoBtn">synthetic demo
+        (validation)</button></div></div>
+      <div style="margin-top:14px;text-align:right">
+        <button class="linky" id="clearBtn" style="color:var(--crit)">clear whole project…</button>
+      </div>
+    </div>
+
+    <!-- =========================================================== POINT -->
+    <div class="tabbody" data-t="point">
+      <div id="noPoint" class="muted">Click a point on the map to inspect and
+        configure it.</div>
+      <div id="ptStation" class="hidden">
+        <h3 id="stTitle">station</h3>
+        <div id="stChips"></div>
+        <div id="curvebox" style="margin:8px 0"><img id="curveimg" alt="H/V curve"></div>
+        <div class="card">
+          <label class="chk" style="margin-top:0"><input type="checkbox" id="stInclude">
+            include this station in the inversion</label>
+          <label>Fixed depth at this point (m) <span class="hint" title="If the depth of an interface is known here (e.g. from a nearby log), enter it — it becomes a depth constraint in the inversion. Leave empty for none.">?</span></label>
+          <div class="grid3">
+            <input type="number" id="stFixDepth" placeholder="none">
+            <select id="stFixLayer"></select>
+            <select id="stFixW">
+              <option value="0.3">weight: soft</option>
+              <option value="1" selected>weight: normal</option>
+              <option value="3">weight: strong</option>
+            </select>
+          </div>
+          <label>Note</label>
+          <input id="stNote" placeholder="field notes…">
+        </div>
+      </div>
+      <div id="ptAux" class="hidden">
+        <h3 id="axTitle">point</h3>
+        <div id="axMeta" class="muted" style="margin-bottom:6px"></div>
+        <h3>Attributes <span class="hint" title="Free-form data for this point — depths, resistivities, lithology… Edit values, add rows. Numeric depth attributes can drive constraints below.">?</span></h3>
+        <table class="kv" id="axAttrs"></table>
+        <div style="display:flex;gap:6px;margin-top:7px">
+          <input id="newAk" placeholder="attribute" style="flex:1">
+          <input id="newAv" placeholder="value" style="flex:1">
+          <button class="btn small" id="addAttr">add</button>
+        </div>
+        <h3>Use as inversion constraint</h3>
+        <div class="card">
+          <label class="chk" style="margin-top:0"><input type="checkbox" id="axUse">
+            constrain an interface depth with this point</label>
+          <div class="grid3">
+            <div><label>depth from</label><select id="axAttr"></select></div>
+            <div><label>interface</label><select id="axLayer"></select></div>
+            <div><label>weight</label><select id="axW">
+              <option value="0.3">soft</option><option value="1" selected>normal</option>
+              <option value="3">strong</option></select></div>
+          </div>
+          <label>Note</label>
+          <input id="axNote" placeholder="interpretation notes…">
+        </div>
+        <button class="btn small danger" id="axDelete">delete this point</button>
+      </div>
+    </div>
+
+    <!-- ======================================================= INVERSION -->
+    <div class="tabbody" data-t="inv">
+      <h3>Quality preset</h3>
+      <div style="display:flex;gap:7px" id="presets">
+        <button class="btn small" data-p="fast" style="flex:1">Fast<br><span class="muted">~15 s</span></button>
+        <button class="btn small" data-p="standard" style="flex:1">Standard<br><span class="muted">~40 s</span></button>
+        <button class="btn small" data-p="high" style="flex:1">High<br><span class="muted">~2 min</span></button>
+      </div>
+      <h3>Sediment layer stack <span class="hint" title="The assumed layers over bedrock. Set each layer's starting Vs; check 'fix' when it is known (borehole log, MASW) — fixed Vs makes multi-layer HVSR far better posed.">?</span></h3>
+      <div id="layerstack"></div>
+      <button class="btn small" id="addLayer">+ add layer</button>
+      <div class="grid2" style="margin-top:6px">
+        <div><label>Bedrock Vs (m/s)</label><input type="number" id="bedrock_vs" value="1800"></div>
+        <div><label>Vp/Vs</label><input type="number" id="vpvs" value="2.2" step="0.1"></div>
+      </div>
+
+      <h3>Constraints</h3>
+      <label class="chk"><input type="checkbox" id="useCons" checked>
+        use imported / manual depth constraints</label>
+      <div class="muted" id="consSummary">no active constraints</div>
+
+      <h3>Frequency band &amp; model</h3>
+      <div class="grid3">
+        <div><label>f min (Hz)</label><input type="number" id="fmin" value="0.3" step="0.05"></div>
+        <div><label>f max (Hz)</label><input type="number" id="fmax" value="12"></div>
+        <div><label>nodes/side <span class="hint" title="Thickness control nodes per direction (2–5). More = finer lateral detail (and more non-uniqueness).">?</span></label>
+          <input type="number" id="ncx" value="3" min="2" max="5"></div>
+        <div><label>smoothing</label><input type="number" id="smooth" value="0.004" step="0.001"></div>
+        <div><label>max iterations</label><input type="number" id="maxiter" value="70"></div>
+        <div><label>max depth (m) <span class="hint" title="0 = automatic from the lowest measured f₀">?</span></label>
+          <input type="number" id="max_depth" value="0"></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="onlyRel">
+        use only SESAME-reliable stations</label>
+      <label>Uncertainty ensemble</label>
+      <select id="ensemble">
+        <option value="1" selected>off (single run)</option>
+        <option value="3">3 members</option><option value="5">5 members</option>
+        <option value="8">8 members</option>
+      </select>
+      <div class="btnrow">
+        <button class="btn primary" id="run2">▶ Run inversion</button>
+      </div>
+    </div>
+
+    <!-- ========================================================= RESULTS -->
+    <div class="tabbody" data-t="res">
+      <div class="note" id="note">No inversion yet.</div>
+      <div class="bar"><div id="bar"></div></div>
+      <div class="tiles" style="margin-top:10px">
+        <div class="tile"><div class="v" id="t_misfit">–</div><div class="k">misfit</div></div>
+        <div class="tile"><div class="v" id="t_f0">–</div><div class="k">median f₀ residual</div></div>
+        <div class="tile"><div class="v" id="t_depth">–</div><div class="k">max bedrock depth</div></div>
+        <div class="tile"><div class="v" id="t_time">–</div><div class="k">elapsed</div></div>
+      </div>
+      <div id="valrow" class="hidden" style="margin-bottom:10px"></div>
+      <div id="consres" class="hidden" style="margin-bottom:10px"></div>
+      <h3>Convergence</h3>
+      <div id="convwrap"><svg id="convsvg" preserveAspectRatio="none"></svg></div>
+      <div class="btnrow">
+        <button class="btn" id="export">⭳ result JSON</button>
+        <button class="btn" id="exportCsv">⭳ depth grid CSV</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Tip: with a result on the map you
+        can <b>click anywhere</b> for the local layer column, draw a
+        <b>✂ section</b>, or open the <b>⛰ 3D basin</b> view.</div>
+      <h3>Previous runs</h3>
+      <div class="sttable" id="runstable" style="max-height:150px">
+        <div class="muted" style="padding:8px">no runs yet</div></div>
+      <details open><summary>Activity log</summary><div id="log"></div></details>
+      <div id="err"></div>
+    </div>
+
+    <!-- ========================================================== CHARTS -->
+    <div class="tabbody" data-t="charts">
+      <div class="btnrow" style="margin-top:0">
+        <button class="btn" id="openReport">📄 Campaign report (print / PDF)</button>
+        <button class="btn" id="exportStations">⭳ stations CSV</button>
+      </div>
+      <div class="muted" style="margin:8px 0 0">The stations CSV includes QC,
+        model f₀, bedrock depth, <b>Vs30</b> and the <b>EC8 site class</b> per
+        station; the report bundles everything below into one printable page.</div>
+
+      <h3>Survey charts</h3>
+      <div class="chartcard" data-need="stations">
+        <div class="ch">All H/V curves — coloured by f₀
+          <a class="linky dl" download="hv_curves.png">⭳</a></div>
+        <img data-k="curves" alt=""></div>
+      <div class="chartcard" data-need="stations">
+        <div class="ch">Resonance strength (f₀ vs A₀, SESAME)
+          <a class="linky dl" download="f0_a0.png">⭳</a></div>
+        <img data-k="f0a0" alt=""></div>
+
+      <h3>Model charts</h3>
+      <div class="chartcard" data-need="model">
+        <div class="ch">Per-station resonance fit of the model
+          <a class="linky dl" download="f0_fit.png">⭳</a></div>
+        <img data-k="fit" alt=""></div>
+      <div class="chartcard" data-need="model">
+        <div class="ch">Bedrock depth distribution &amp; hypsometry
+          <a class="linky dl" download="depth_dist.png">⭳</a></div>
+        <img data-k="depthdist" alt=""></div>
+      <div class="muted" id="chnote"></div>
+    </div>
+  </aside>
+</div>
+<div id="convtip"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const TYPE_COLOR={hvsr:"#2a78d6",borehole:"#eb6834",resistivity:"#4a3aa7",
+                  gpr:"#1baf7a",geology:"#eda100",manual:"#e87ba4",other:"#eda100"};
+const BLUES=["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#2a78d6","#256abf","#1c5cab","#104281","#0d366b"];
+
+// ------------------------------------------------------------------- tabs
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>showTab(t.dataset.t));
+function showTab(name){
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("sel",x.dataset.t===name));
+  document.querySelectorAll(".tabbody").forEach(x=>x.classList.toggle("show",x.dataset.t===name));
+  if(name==="charts")refreshCharts();
+}
+function refreshCharts(){
+  const hasSt=STATE&&Object.values(STATE.project.datasets)
+    .some(d=>(d.stations||[]).length);
+  const hasModel=STATE&&STATE.job&&STATE.job.vs3d;
+  let hidden=0;
+  document.querySelectorAll(".chartcard").forEach(c=>{
+    const ok=c.dataset.need==="stations"?hasSt:hasModel;
+    c.classList.toggle("hidden",!ok);
+    if(!ok){hidden++;return;}
+    const img=c.querySelector("img");
+    const url=`/api/chart.png?k=${img.dataset.k}&v=${Date.now()}`;
+    img.src=url;
+    c.querySelector(".dl").href=url;
+  });
+  $("chnote").textContent=hidden
+    ?(hasSt?"model charts appear after an inversion run"
+           :"charts appear once an HVSR dataset is processed"):"";
+}
+$("openReport").onclick=()=>window.open("/report","_blank");
+$("exportStations").onclick=()=>{window.location="/api/export/stations.csv";};
+
+// collapsible sections (every menu header)
+document.querySelectorAll(".tabbody h3").forEach(h=>{
+  h.classList.add("clps");
+  h.addEventListener("click",e=>{
+    if(e.target.classList.contains("hint"))return;
+    const closed=h.classList.toggle("closed");
+    let n=h.nextElementSibling;
+    while(n&&n.tagName!=="H3"){n.dataset.clps=closed?"1":"";
+      n.style.display=closed?"none":"";n=n.nextElementSibling;}
+  });
+});
+$("ovlhead").onclick=()=>$("ovlctl").classList.toggle("closed");
+
+// -------------------------------------------------------------------- map
+const map=L.map("map",{zoomControl:true}).setView([45.1885,5.7245],14);
+const BASE={
+  "OpenStreetMap":L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19,attribution:"© OpenStreetMap contributors"}),
+  "Satellite (Esri)":L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {maxZoom:19,attribution:"Tiles © Esri — Maxar, Earthstar Geographics"}),
+  "Terrain (OpenTopoMap)":L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    {maxZoom:17,attribution:"© OpenStreetMap, SRTM · © OpenTopoMap (CC-BY-SA)"}),
+  "Light (Carto)":L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    {maxZoom:19,attribution:"© OpenStreetMap · © CARTO"})};
+BASE["OpenStreetMap"].addTo(map);
+L.control.layers(BASE,null,{position:"bottomright"}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+
+// resizable sidebar
+(()=>{const sp=$("split"),aside=document.querySelector("aside");
+let drag=null;
+sp.onpointerdown=e=>{drag={x:e.clientX,w:aside.offsetWidth};sp.classList.add("on");
+  sp.setPointerCapture(e.pointerId);};
+sp.onpointermove=e=>{if(!drag)return;
+  aside.style.width=Math.max(360,Math.min(900,drag.w+(drag.x-e.clientX)))+"px";};
+sp.onpointerup=sp.onpointercancel=()=>{drag=null;sp.classList.remove("on");
+  map.invalidateSize();if(typeof v3!=="undefined")v3.resize();};
+})();
+const markers={};              // "ds|id" -> L.marker/circleMarker
+let selected=null, addMode=false, fitted=false;
+
+function f0Color(f0,lo,hi){
+  if(f0==null||!(hi>lo))return "#9ec5f4";
+  const t=(Math.log(f0)-Math.log(lo))/(Math.log(hi)-Math.log(lo));
+  return BLUES[Math.round((1-Math.max(0,Math.min(1,t)))*(BLUES.length-1))];
+}
+const SHAPES={borehole:"■",resistivity:"▲",gpr:"◆",geology:"⬢",manual:"★",other:"●"};
+function auxIcon(type,sel,used){
+  const c=TYPE_COLOR[type]||TYPE_COLOR.other;
+  const ch=SHAPES[type]||"●";
+  return L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],
+    html:`<div style="font-size:${sel?21:17}px;line-height:26px;text-align:center;
+      color:${c};text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 4px #fff;
+      ${sel?"filter:drop-shadow(0 0 3px "+c+");":""}
+      ${used?"":"opacity:.45;"}">${ch}</div>`});
+}
+
+// ------------------------------------------------------------- state poll
+let STATE=null, dsKey="", jobKey="", lastConvN=-1, overlayLayers={};
+async function poll(){
+  let s;
+  try{s=await(await fetch("/api/state")).json();}catch(e){return;}
+  STATE=s;
+  renderJob(s.job);
+  const dk=JSON.stringify(Object.entries(s.project.datasets).map(([n,d])=>
+    [n,d.status,d.n,(d.stations||[]).map(x=>[x.cfg,x.f0]),(d.points||[]).map(x=>[x.cfg,x.attrs])]));
+  if(dk!==dsKey){dsKey=dk;renderDatasets(s.project);renderMarkers(s.project);
+    refreshConsSummary();f0ovl=null;if($("showF0").checked)toggleF0();}
+  renderOverlays(s.job);
+  renderRuns(s.runs);
+  // live 3D model
+  if(typeof v3!=="undefined"){
+    const v=s.job.vs3d;
+    $("btn3d").style.display=v?"":"none";
+    if(v){const key=(s.job.misfit||[]).length+":"+(v.layers?v.layers.length:0)
+        +":"+Math.round(v.max_depth);
+      if(key!==v3key){v3key=key;v3.setData(v);}}
+  }
+}
+setInterval(poll,1000);poll();
+
+// -------------------------------------------------------------- datasets
+function renderDatasets(proj){
+  const box=$("dslist");
+  const names=Object.keys(proj.datasets);
+  if(!names.length){box.innerHTML=`<div class="muted">nothing loaded yet — load a
+    survey folder, or try the <button class="linky" id="demoBtn">synthetic demo
+    (validation)</button></div>`;$("demoBtn").onclick=runDemo;return;}
+  box.innerHTML="";
+  for(const n of names){
+    const d=proj.datasets[n];
+    const row=document.createElement("div");row.className="dsrow";
+    const st=d.status==="processing"?"⏳ processing":(d.status==="error"?"⚠ error":`${d.n} pts`);
+    row.innerHTML=`<div class="dot" style="background:${TYPE_COLOR[d.type]||TYPE_COLOR.other}"></div>
+      <div class="nm">${n}</div><div class="meta">${d.type} · ${st}</div>
+      <button class="del" title="remove dataset">×</button>`;
+    row.onclick=e=>{if(e.target.classList.contains("del"))return;zoomDataset(d);};
+    row.querySelector(".del").onclick=async()=>{
+      if(!confirm(`Remove dataset "${n}" from the project?`))return;
+      await api("/api/dataset/delete",{name:n});poll();};
+    box.appendChild(row);
+  }
+}
+function zoomDataset(d){
+  const pts=(d.stations||d.points||[]).filter(p=>p.lat!=null);
+  if(pts.length)map.fitBounds(pts.map(p=>[p.lat,p.lon]),{padding:[40,40]});
+}
+
+// ---------------------------------------------------------------- markers
+function renderMarkers(proj){
+  const seen=new Set();
+  let f0s=[];
+  for(const d of Object.values(proj.datasets))
+    for(const st of d.stations||[]) if(st.f0)f0s.push(st.f0);
+  const lo=Math.min(...f0s),hi=Math.max(...f0s);
+  if(f0s.length)$("f0rng").textContent=`station f₀  ${hi.toFixed(1)} … ${lo.toFixed(1)} Hz (deep)`;
+  for(const [name,d] of Object.entries(proj.datasets)){
+    for(const st of d.stations||[]){
+      if(st.lat==null)continue;
+      const key=name+"|"+st.sid;seen.add(key);
+      const sel=selected&&selected.key===key;
+      const exc=st.cfg&&st.cfg.exclude;
+      const opts={radius:sel?10:7,weight:sel?3:(st.reliable===false?2.5:1.5),
+        color:sel?"#0b0b0b":(st.reliable===false?"#d03b3b":"#ffffff"),
+        fillColor:exc?"#c3c2b7":f0Color(st.f0,lo,hi),fillOpacity:exc?.5:.95};
+      if(markers[key]){markers[key].setLatLng([st.lat,st.lon]);markers[key].setStyle(opts);}
+      else{
+        markers[key]=L.circleMarker([st.lat,st.lon],opts).addTo(map);
+        markers[key].on("click",()=>selectPoint(name,st.sid));
+        bindStationTip(markers[key],st);
+      }
+      markers[key]._pt=st;
+    }
+    for(const p of d.points||[]){
+      if(p.lat==null)continue;
+      const key=name+"|"+p.pid;seen.add(key);
+      const sel=selected&&selected.key===key;
+      const used=p.cfg&&p.cfg.use;
+      if(markers[key]){markers[key].setLatLng([p.lat,p.lon]);
+        markers[key].setIcon(auxIcon(d.type,sel,used));}
+      else{
+        markers[key]=L.marker([p.lat,p.lon],{icon:auxIcon(d.type,sel,used)}).addTo(map)
+          .bindTooltip(()=>{const a=p.cfg&&p.cfg.attr?` — ${p.cfg.attr}: ${p.attrs[p.cfg.attr]}`:"";
+            return `${p.pid} (${d.type})${a}`;});
+        markers[key].on("click",()=>selectPoint(name,p.pid));
+      }
+      markers[key]._pt=p;
+    }
+  }
+  for(const k of Object.keys(markers))
+    if(!seen.has(k)){map.removeLayer(markers[k]);delete markers[k];}
+  if(!fitted&&seen.size){fitted=true;
+    map.fitBounds([...seen].map(k=>markers[k].getLatLng()),{padding:[50,50]});}
+}
+
+// ---------------------------------------------------------- station labels
+let showLabels=false;
+function bindStationTip(m,st){
+  m.unbindTooltip();
+  if(showLabels)
+    m.bindTooltip(st.sid,{permanent:true,direction:"top",offset:[0,-7],
+      className:"stlbl"});
+  else
+    m.bindTooltip(()=>`${st.sid} — f₀ ${st.f0} Hz${st.reliable===false?" · ⚠ SESAME":""}`);
+}
+$("btnLbl").onclick=()=>{
+  showLabels=!showLabels;
+  $("btnLbl").classList.toggle("on",showLabels);
+  for(const k of Object.keys(markers)){
+    const m=markers[k];
+    if(m._pt&&m._pt.sid)bindStationTip(m,m._pt);
+  }
+};
+
+// ------------------------------------------------------------- selection
+let saveTimer=null;
+function debounceSave(fn){clearTimeout(saveTimer);saveTimer=setTimeout(fn,450);}
+async function api(url,body){
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})});
+  let j={};try{j=await r.json();}catch(e){}
+  if(!r.ok)throw new Error(j.error||("HTTP "+r.status));
+  return j;
+}
+function layerOptions(sel){
+  const nL=stack.length;
+  let h="";
+  for(let i=1;i<=nL;i++)h+=`<option value="${i}" ${sel===i?"selected":""}>interface ${i}</option>`;
+  h+=`<option value="-1" ${(sel===-1||sel==null||sel>nL)?"selected":""}>bedrock</option>`;
+  return h;
+}
+function selectPoint(ds,id){
+  selected={key:ds+"|"+id,ds,id};
+  renderMarkers(STATE.project);
+  const d=STATE.project.datasets[ds];
+  showTab("point");
+  $("noPoint").classList.add("hidden");
+  if(d.stations&&d.stations.some(s=>s.sid===id)){
+    const st=d.stations.find(s=>s.sid===id);
+    $("ptAux").classList.add("hidden");$("ptStation").classList.remove("hidden");
+    $("stTitle").textContent=`${id} — ${ds}`;
+    let chips=`<span class="chip">f₀ ${st.f0} Hz${st.f0_sigma?" ± "+st.f0_sigma:""}</span>
+      <span class="chip">A₀ ${st.a0}</span>`;
+    if(st.kind==="record")chips+=`<span class="chip">${st.n_win} windows${st.n_rej?` (${st.n_rej} rejected)`:""}</span>
+      <span class="chip ${st.reliable?"ok":"bad"}">${st.reliable?"✓ SESAME reliable":"✗ SESAME unreliable"}</span>
+      <span class="chip ${st.clear_peak?"ok":"wn"}">${st.clear_peak?"clear peak":"unclear peak"}</span>`;
+    else chips+=`<span class="chip">pre-processed .hv</span>`;
+    chips+=`<span class="chip">${st.lat.toFixed(5)}, ${st.lon.toFixed(5)}</span>`;
+    $("stChips").innerHTML=chips;
+    $("curveimg").src=`/api/curve.png?ds=${encodeURIComponent(ds)}&id=${encodeURIComponent(id)}&v=${Date.now()%1e7}`;
+    $("stInclude").checked=!(st.cfg&&st.cfg.exclude);
+    $("stFixDepth").value=(st.cfg&&st.cfg.fix_depth)||"";
+    $("stFixLayer").innerHTML=layerOptions(st.cfg?st.cfg.layer:-1);
+    $("stFixW").value=String((st.cfg&&st.cfg.weight)||1);
+    $("stNote").value=(st.cfg&&st.cfg.note)||"";
+    const save=()=>debounceSave(async()=>{
+      await api("/api/point/config",{ds,id,cfg:{
+        exclude:!$("stInclude").checked,
+        fix_depth:$("stFixDepth").value?+$("stFixDepth").value:null,
+        layer:+$("stFixLayer").value,weight:+$("stFixW").value,
+        note:$("stNote").value}});
+      poll();refreshConsSummary();});
+    ["stInclude","stFixDepth","stFixLayer","stFixW","stNote"]
+      .forEach(i=>$(i).onchange=save);
+  }else{
+    const p=(d.points||[]).find(x=>x.pid===id);
+    if(!p)return;
+    $("ptStation").classList.add("hidden");$("ptAux").classList.remove("hidden");
+    $("axTitle").textContent=`${id} — ${ds}`;
+    $("axMeta").textContent=`${d.type} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`
+      +(p.approx_pos?" · position approximate (no GPS in source)":"");
+    renderAttrs(ds,p);
+    const numeric=Object.keys(p.attrs).filter(k=>typeof p.attrs[k]==="number");
+    $("axAttr").innerHTML=numeric.map(k=>
+      `<option ${p.cfg.attr===k?"selected":""}>${k}</option>`).join("")
+      ||"<option value=''>— no numeric attribute —</option>";
+    $("axLayer").innerHTML=layerOptions(p.cfg.layer);
+    $("axUse").checked=!!p.cfg.use;$("axW").value=String(p.cfg.weight||1);
+    $("axNote").value=p.cfg.note||"";
+    const save=()=>debounceSave(async()=>{
+      await api("/api/point/config",{ds,id,cfg:{
+        use:$("axUse").checked,attr:$("axAttr").value||null,
+        layer:+$("axLayer").value,weight:+$("axW").value,
+        note:$("axNote").value}});
+      poll();refreshConsSummary();});
+    ["axUse","axAttr","axLayer","axW","axNote"].forEach(i=>$(i).onchange=save);
+    $("axDelete").onclick=async()=>{
+      if(!confirm(`Delete point ${id}?`))return;
+      await api("/api/point/delete",{ds,id});
+      selected=null;$("ptAux").classList.add("hidden");$("noPoint").classList.remove("hidden");
+      poll();};
+  }
+}
+function renderAttrs(ds,p){
+  const tb=$("axAttrs");tb.innerHTML="";
+  for(const[k,v]of Object.entries(p.attrs)){
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${k}</td><td><input value="${v}"></td>
+      <td style="width:22px;border:none"><button class="rm" title="remove">×</button></td>`;
+    tr.querySelector("input").onchange=e=>debounceSave(async()=>{
+      await api("/api/point/config",{ds,id:p.pid,cfg:{},attrs:{[k]:e.target.value}});
+      poll();});
+    tr.querySelector(".rm").onclick=async()=>{
+      await api("/api/point/config",{ds,id:p.pid,cfg:{},attrs:{[k]:null}});
+      p.attrs&&delete p.attrs[k];renderAttrs(ds,p);poll();};
+    tb.appendChild(tr);
+  }
+  $("addAttr").onclick=async()=>{
+    const k=$("newAk").value.trim(),v=$("newAv").value.trim();
+    if(!k)return;
+    await api("/api/point/config",{ds,id:p.pid,cfg:{},attrs:{[k]:v}});
+    $("newAk").value="";$("newAv").value="";poll();
+    setTimeout(()=>selectPoint(ds,p.pid),300);
+  };
+}
+
+// ------------------------------------------------------------- add point
+$("addPointBtn").onclick=()=>{addMode=true;$("addhint").style.display="block";
+  document.getElementById("map").style.cursor="crosshair";};
+$("btnAdd").onclick=()=>$("addPointBtn").onclick();
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){stopAdd();if(typeof endSecMode==="function")endSecMode();}});
+function stopAdd(){addMode=false;$("addhint").style.display="none";
+  document.getElementById("map").style.cursor="";}
+map.on("click",async e=>{
+  if(typeof secMode!=="undefined"&&secMode){
+    secPts.push(e.latlng);
+    if(secPts.length===2){endSecMode();cutSection();}
+    return;
+  }
+  if(addMode){
+    stopAdd();
+    const pid=prompt("Point name:","P1");if(pid===null)return;
+    const dv=prompt("Known/interpreted bedrock depth at this point (m) — leave empty if none:","");
+    const attrs={};
+    if(dv&&+dv>0)attrs.bedrock_depth=+dv;
+    await api("/api/point/add",{lat:e.latlng.lat,lon:e.latlng.lng,id:pid,attrs});
+    await poll();
+    selectPoint("manual_points",pid);
+    return;
+  }
+  // otherwise: with an inverted model, show the 1-D column under the click
+  if(STATE&&STATE.job&&STATE.job.vs3d)showProfile(e.latlng);
+});
+
+// ---------------------------------------------------------------- upload
+async function uploadFiles(dataset,files,kind,type){
+  const keep=/\.(csv|hv|npz|mseed|msd|sac|txt)$/i;
+  const list=[...files].filter(f=>keep.test(f.name)&&f.size<80e6);
+  if(!list.length){$("loadnote").textContent="⚠ no usable files in the selection";return;}
+  let done=0;
+  for(const f of list){
+    $("loadnote").textContent=`uploading ${f.name} (${++done}/${list.length})…`;
+    await fetch(`/api/upload?dataset=${encodeURIComponent(dataset)}&name=${encodeURIComponent(f.name)}`,
+      {method:"POST",body:await f.arrayBuffer()});
+  }
+  $("loadnote").textContent="processing…";
+  try{
+    await api("/api/dataset/commit",{name:dataset,kind,type});
+    $("loadnote").textContent=kind==="hvsr"
+      ?"processing records — watch the dataset list":"points loaded ✓";
+  }catch(err){$("loadnote").textContent="⚠ "+err.message;}
+  fitted=false;poll();
+}
+$("loadHvsr").onclick=()=>$("hvsrPick").click();
+$("hvsrPick").onchange=e=>{
+  const fs=e.target.files;if(!fs.length)return;
+  const root=(fs[0].webkitRelativePath||fs[0].name).split("/")[0]||"survey";
+  uploadFiles(root,fs,"hvsr","hvsr");e.target.value="";
+};
+$("loadAux").onclick=()=>$("auxPick").click();
+$("auxPick").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const name=f.name.replace(/\.csv$/i,"");
+  uploadFiles(name,[f],"aux",$("auxType").value);e.target.value="";
+};
+async function runDemo(){
+  $("loadnote").textContent="generating validation demo (synthetic records)…";
+  try{await api("/api/demo",{seed:2});}catch(err){$("loadnote").textContent="⚠ "+err.message;return;}
+  $("loadnote").textContent="demo campaign is being processed…";
+  fitted=false;
+}
+$("demoBtn").onclick=runDemo;
+$("clearBtn").onclick=async()=>{
+  if(!confirm("Remove ALL datasets and results from the project?"))return;
+  try{await api("/api/project/clear");}catch(err){alert(err.message);return;}
+  for(const k of Object.keys(markers)){map.removeLayer(markers[k]);delete markers[k];}
+  selected=null;fitted=false;dsKey="";poll();
+};
+
+// ------------------------------------------------------------ layer stack
+let stack=[{vs:300,fix:false},{vs:450,fix:false},{vs:620,fix:false}];
+function renderStack(){
+  const box=$("layerstack");box.innerHTML="";
+  stack.forEach((l,i)=>{
+    const t=stack.length>1?i/(stack.length-1):.5;
+    const col=BLUES[Math.round(2+t*5)];
+    const row=document.createElement("div");row.className="layerrow";
+    row.innerHTML=`<div class="sw" style="background:${col}"></div>
+      <input type="number" value="${l.vs}" title="initial Vs of layer ${i+1} (m/s)">
+      <label class="fx"><input type="checkbox" ${l.fix?"checked":""}> fix Vs</label>
+      <button class="rm" title="remove layer">×</button>`;
+    row.querySelector("input[type=number]").onchange=e=>{l.vs=+e.target.value;};
+    row.querySelector("input[type=checkbox]").onchange=e=>{l.fix=e.target.checked;};
+    row.querySelector(".rm").onclick=()=>{if(stack.length>1){stack.splice(i,1);renderStack();}};
+    box.appendChild(row);
+  });
+}
+$("addLayer").onclick=()=>{if(stack.length<4){
+  stack.push({vs:(stack[stack.length-1].vs||500)+150,fix:false});renderStack();}};
+renderStack();
+
+function refreshConsSummary(){
+  if(!STATE)return;
+  let n=0,parts=[];
+  for(const[nm,d]of Object.entries(STATE.project.datasets)){
+    let c=0;
+    for(const s of d.stations||[])if(s.cfg&&s.cfg.fix_depth)c++;
+    for(const p of d.points||[])if(p.cfg&&p.cfg.use&&p.cfg.attr)c++;
+    if(c){n+=c;parts.push(`${nm}: ${c}`);}
+  }
+  $("consSummary").textContent=n?`${n} active depth constraint${n>1?"s":""} (${parts.join(", ")})`
+    :"no active constraints — import boreholes or set fixed depths on points";
+}
+
+// --------------------------------------------------------------- running
+async function startRun(){
+  const body={layers:stack,bedrock_vs:+$("bedrock_vs").value,vpvs:+$("vpvs").value,
+    fmin:+$("fmin").value,fmax:+$("fmax").value,ncx:+$("ncx").value,
+    smooth_weight:+$("smooth").value,maxiter:+$("maxiter").value,
+    max_depth:+$("max_depth").value,ensemble:+$("ensemble").value,
+    use_constraints:$("useCons").checked,only_reliable:$("onlyRel").checked};
+  $("err").textContent="";
+  try{await api("/api/invert",body);}catch(err){$("err").textContent=err.message;
+    showTab("res");return;}
+  lastConvN=-1;showTab("res");poll();
+}
+$("run").onclick=startRun;$("run2").onclick=startRun;
+$("stop").onclick=()=>fetch("/api/stop",{method:"POST"});
+
+function renderJob(j){
+  const running=j.running;
+  $("pilltx").textContent=j.kind==="process"&&running?"processing":j.stage;
+  $("pill").className="pill "+(running?"running":
+    (j.stage==="done"?"done":(j.stage==="error"||j.stage==="stopped"?j.stage:"")));
+  $("run").disabled=running;$("run2").disabled=running;$("stop").disabled=!running;
+  $("bar").style.width=(100*(j.progress||0))+"%";
+  $("note").textContent=j.note||(j.stage==="done"?"Inversion complete.":
+    (j.stage==="idle"?"No inversion yet.":j.stage));
+  const m=j.misfit||[];
+  if(m.length){$("t_misfit").textContent=Number(m[m.length-1]).toPrecision(3);}
+  const f=j.f0res||[];
+  if(f.length){$("t_f0").textContent=f[f.length-1].toFixed(1)+"%";
+    $("t_f0").className="v"+(f[f.length-1]<8?" good":"");}
+  if(j.result){
+    $("t_depth").textContent=Math.round(j.result.max_depth)+" m";
+    const el=j.result.elapsed;
+    $("t_time").textContent=el>90?Math.floor(el/60)+"m"+String(Math.round(el%60)).padStart(2,"0"):Math.round(el)+"s";
+    const vr=$("valrow");
+    if(j.result.rms_vs_truth!=null){vr.classList.remove("hidden");
+      vr.innerHTML=`<span class="chip ok">validation vs hidden truth: RMS
+        ${j.result.rms_vs_truth.toFixed(0)} m · corr ${j.result.corr_vs_truth.toFixed(2)}</span>`;}
+    else vr.classList.add("hidden");
+    const cr=$("consres");
+    if(j.result.constraint_residuals_m){cr.classList.remove("hidden");
+      cr.innerHTML="constraint residuals: "+j.result.constraint_residuals_m
+        .map(r=>`<span class="chip ${Math.abs(r)<15?"ok":"wn"}">${r>0?"+":""}${r} m</span>`).join("");}
+    else cr.classList.add("hidden");
+  }
+  if(m.length!==lastConvN){lastConvN=m.length;drawConv(m);}
+  const lg=$("log");const atB=lg.scrollTop+lg.clientHeight>lg.scrollHeight-30;
+  lg.textContent=(j.log||[]).join("\n");if(atB)lg.scrollTop=lg.scrollHeight;
+  if(j.error)$("err").textContent=j.error;
+}
+$("exportCsv").onclick=()=>{window.location="/api/export/depth.csv";};
+$("export").onclick=()=>{
+  if(!STATE)return;
+  const out={result:STATE.job.result,misfit:STATE.job.misfit,
+    f0_residual:STATE.job.f0res,project:STATE.project};
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="basininv_field_result.json";a.click();
+};
+
+// ---------------------------------------------------------- convergence
+function drawConv(m){
+  const svg=$("convsvg");
+  if(!m.length){svg.innerHTML="";return;}
+  const W=380,Hh=130,pad=6;
+  svg.setAttribute("viewBox",`0 0 ${W} ${Hh}`);
+  const ys=m.map(v=>Math.log10(Math.max(v,1e-12)));
+  const y0=Math.min(...ys),y1=Math.max(...ys),sp=Math.max(y1-y0,1e-6);
+  const px=i=>pad+(W-2*pad)*(m.length===1?0.5:i/(m.length-1));
+  const py=v=>Hh-pad-(Hh-2*pad)*((Math.log10(Math.max(v,1e-12))-y0)/sp);
+  let d="M"+m.map((v,i)=>`${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" L");
+  svg.innerHTML=`
+    <line x1="${pad}" y1="${Hh-pad}" x2="${W-pad}" y2="${Hh-pad}" stroke="#c3c2b7" stroke-width="1"/>
+    <path d="${d}" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+    <rect id="convhit" x="0" y="0" width="${W}" height="${Hh}" fill="transparent"/>`;
+  const tip=$("convtip"),hit=svg.querySelector("#convhit");
+  hit.onmousemove=e=>{
+    const r=svg.getBoundingClientRect();
+    const i=Math.round((e.clientX-r.left)/r.width*(m.length-1));
+    if(i<0||i>=m.length)return;
+    tip.style.display="block";tip.style.left=(e.clientX+12)+"px";tip.style.top=(e.clientY-28)+"px";
+    tip.textContent=`eval ${i+1} — misfit ${Number(m[i]).toPrecision(3)}`;
+  };
+  hit.onmouseleave=()=>{tip.style.display="none";};
+}
+
+// -------------------------------------------------------------- overlays
+let f0ovl=null;
+function anyStations(){
+  return STATE&&Object.values(STATE.project.datasets)
+    .some(d=>(d.stations||[]).length);
+}
+function renderOverlays(j){
+  const o={...((j||{}).overlays||{})};
+  if(f0ovl)o.f0=f0ovl;
+  const ctl=$("ovlctl");
+  const hasDepth=!!o.depth;
+  if(!hasDepth&&!anyStations()){ctl.style.display="none";
+    for(const k of Object.keys(overlayLayers)){map.removeLayer(overlayLayers[k]);delete overlayLayers[k];}
+    return;}
+  ctl.style.display="block";
+  $("depthrow").style.display=hasDepth?"flex":"none";
+  $("sigmarow").style.display=o.sigma?"flex":"none";
+  $("zoomRes").style.display=hasDepth?"":"none";
+  $("vs30row").style.display=o.vs30?"flex":"none";
+  if(hasDepth&&!o.vs30&&!renderOverlays._v30req){renderOverlays._v30req=1;
+    fetch("/api/vs30overlay").catch(()=>{});}   // registers server-side
+  const op=+$("ovlop").value/100;
+  const want={depth:hasDepth&&$("showDepth").checked,
+              sigma:o.sigma&&$("showSigma").checked,
+              vs30:o.vs30&&$("showVs30").checked,
+              f0:o.f0&&$("showF0").checked};
+  for(const key of ["depth","sigma","vs30","f0"]){
+    const info=o[key];
+    if(want[key]){
+      const url=info.url+"?v="+info.v;
+      if(!overlayLayers[key]){
+        overlayLayers[key]=L.imageOverlay(url,info.bounds,{opacity:op,interactive:false}).addTo(map);
+        overlayLayers[key]._v=String(info.v);
+      }else{
+        if(overlayLayers[key]._v!==String(info.v)){
+          overlayLayers[key].setUrl(url);overlayLayers[key]._v=String(info.v);
+          overlayLayers[key].setBounds(info.bounds);}
+        overlayLayers[key].setOpacity(op);
+      }
+    }else if(overlayLayers[key]){map.removeLayer(overlayLayers[key]);delete overlayLayers[key];}
+  }
+  const wantKey=want.sigma?"sigma":(want.vs30?"vs30"
+    :(want.f0&&!want.depth?"f0":(hasDepth?"depth":(want.f0?"f0":null))));
+  const cb=$("cbar");
+  if(!wantKey){cb.removeAttribute("src");cb.dataset.k="";return;}
+  const info=o[wantKey];
+  const cbKey=wantKey+":"+(info?info.v:"");
+  if(cb.dataset.k!==cbKey){cb.dataset.k=cbKey;
+    cb.src=wantKey==="f0"
+      ?`/api/colorbar.png?k=f0&vmin=${info.vmin}&vmax=${info.vmax}`
+      :`/api/colorbar.png?k=${wantKey}&v=${encodeURIComponent(cbKey)}`;}
+}
+async function toggleF0(){
+  if($("showF0").checked&&!f0ovl){
+    try{const r=await fetch("/api/f0overlay");
+      if(r.ok)f0ovl=await r.json();else $("showF0").checked=false;}
+    catch(e){$("showF0").checked=false;}
+  }
+  renderOverlays(STATE?STATE.job:{overlays:{}});
+}
+$("showF0").onchange=toggleF0;
+["showDepth","showSigma","showVs30"].forEach(i=>$(i).onchange=()=>renderOverlays(STATE?STATE.job:{overlays:{}}));
+$("ovlop").oninput=()=>renderOverlays(STATE?STATE.job:{overlays:{}});
+$("zoomRes").onclick=()=>{
+  const o=STATE&&STATE.job.overlays&&STATE.job.overlays.depth;
+  if(o)map.fitBounds(o.bounds,{padding:[30,30]});
+};
+
+// ---------------------------------------------------------------- presets
+const PRESETS={fast:{ncx:3,maxiter:40},standard:{ncx:3,maxiter:70},
+               high:{ncx:4,maxiter:110}};
+document.querySelectorAll("#presets .btn").forEach(b=>b.onclick=()=>{
+  const p=PRESETS[b.dataset.p];
+  $("ncx").value=p.ncx;$("maxiter").value=p.maxiter;
+  document.querySelectorAll("#presets .btn").forEach(x=>
+    x.classList.toggle("on",x===b));
+});
+
+// -------------------------------------------------------------- run history
+let runsKey="";
+function renderRuns(runs){
+  const el=$("runstable");
+  const key=JSON.stringify(runs||[]);
+  if(key===runsKey)return;runsKey=key;
+  if(!runs||!runs.length){el.innerHTML='<div class="muted" style="padding:8px">no runs yet</div>';return;}
+  let h=`<table><tr><th>when</th><th>misfit</th><th>f₀ res</th><th>max z</th><th>cons</th><th>RMS*</th></tr>`;
+  [...runs].reverse().forEach(r=>{
+    h+=`<tr><td>${r.ts}</td><td>${r.misfit!=null?Number(r.misfit).toPrecision(3):"–"}</td>
+      <td>${r.f0res!=null?r.f0res.toFixed(1)+"%":"–"}</td>
+      <td>${r.max_depth!=null?Math.round(r.max_depth)+" m":"–"}</td>
+      <td>${r.n_constraints??"–"}</td>
+      <td>${r.rms!=null?Math.round(r.rms)+" m":"–"}</td></tr>`;});
+  el.innerHTML=h+"</table>";
+}
+
+// =========================================================== 3D basin view
+class Basin3D{
+  constructor(canvas){
+    this.cv=canvas;this.ctx=canvas.getContext("2d");
+    this.az=-0.75;this.el=0.55;this.zoom=1;this.data=null;
+    this.spin=true;this.explode=false;this.showSta=true;this.ex=1.0;
+    this.dpr=Math.min(window.devicePixelRatio||1,2);this._drag=null;
+    canvas.addEventListener("pointerdown",e=>{this._drag={x:e.clientX,y:e.clientY,
+      az:this.az,el:this.el};canvas.classList.add("drag");
+      canvas.setPointerCapture(e.pointerId);});
+    canvas.addEventListener("pointermove",e=>{if(!this._drag)return;
+      this.az=this._drag.az+(e.clientX-this._drag.x)*0.01;
+      this.el=Math.max(0.05,Math.min(1.45,this._drag.el+(e.clientY-this._drag.y)*0.008));
+      this.draw();});
+    const end=()=>{this._drag=null;canvas.classList.remove("drag");};
+    canvas.addEventListener("pointerup",end);canvas.addEventListener("pointercancel",end);
+    canvas.addEventListener("wheel",e=>{e.preventDefault();
+      this.zoom=Math.max(0.45,Math.min(3,this.zoom*(e.deltaY<0?1.08:0.93)));this.draw();},
+      {passive:false});
+    window.addEventListener("resize",()=>this.resize());
+    const loop=()=>{if(this.spin&&!this._drag&&this.data&&
+      $("view3d").classList.contains("show")){this.az+=0.004;this.draw();}
+      requestAnimationFrame(loop);};
+    requestAnimationFrame(loop);
+  }
+  resize(){const r=this.cv.getBoundingClientRect();
+    this.cv.width=Math.max(300,r.width)*this.dpr;
+    this.cv.height=Math.max(200,r.height)*this.dpr;this.draw();}
+  setData(d){this.data=d;this.legend();this.draw();}
+  reset(){this.az=-0.75;this.el=0.55;this.zoom=1;this.draw();}
+  layerColor(i,n){return BLUES[Math.min(1+i*2,BLUES.length-2)];}
+  legend(){
+    const d=this.data,el=$("v3legend");
+    if(!d){el.innerHTML="";return;}
+    let h="";
+    d.vs.slice(0,-1).forEach((v,i)=>{h+=`<div class="lg"><span class="sw"
+      style="background:${this.layerColor(i)}"></span>layer ${i+1} — Vs ${v} m/s</div>`;});
+    h+=`<div class="lg"><span class="sw" style="background:#d8d4c8"></span>bedrock — Vs ${d.vs[d.vs.length-1]} m/s</div>`;
+    h+=`<div class="muted" style="margin-top:4px">max depth ${Math.round(d.max_depth)} m</div>`;
+    el.innerHTML=h;
+  }
+  draw(){
+    const ctx=this.ctx,W=this.cv.width,Hh=this.cv.height;
+    ctx.clearRect(0,0,W,Hh);
+    const d=this.data;if(!d||!d.layers)return;
+    const nx=d.x.length,ny=d.y.length,nL=d.layers.length;
+    const Lx=d.x[nx-1]-d.x[0],Ly=d.y[ny-1]-d.y[0],Lm=Math.max(Lx,Ly,1);
+    const md=Math.max(d.max_depth,1),zex=0.55*this.ex;
+    const ca=Math.cos(this.az),sa=Math.sin(this.az),
+          ce=Math.cos(this.el),se=Math.sin(this.el);
+    const scale=Math.min(W,Hh)*0.62*this.zoom,cx=W*0.5,cy=Hh*0.52;
+    const light=[0.4,0.5,0.75],ln=Math.hypot(...light);
+    const proj=(x,y,depth,off)=>{
+      const X=(x-d.x[0]-Lx/2)/Lm,Y=(y-d.y[0]-Ly/2)/Lm;
+      const Z=(-(depth+off)/md)*zex+0.22;
+      const rx=ca*X+sa*Y,ry=-sa*X+ca*Y,sy=ce*ry-se*Z,cam=se*ry+ce*Z;
+      return [cx+rx*scale,cy-sy*scale,cam];
+    };
+    const quads=[];
+    for(let Li=0;Li<nL;Li++){
+      const surf=d.layers[Li];
+      const hex=this.layerColor(Li);
+      const base=[parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),
+                  parseInt(hex.slice(5,7),16)];
+      const off=this.explode?Li*md*0.14:0;
+      for(let i=0;i<nx-1;i++)for(let j=0;j<ny-1;j++){
+        const p00=proj(d.x[i],d.y[j],surf[i][j],off),
+              p10=proj(d.x[i+1],d.y[j],surf[i+1][j],off),
+              p11=proj(d.x[i+1],d.y[j+1],surf[i+1][j+1],off),
+              p01=proj(d.x[i],d.y[j+1],surf[i][j+1],off);
+        const ax=d.x[i+1]-d.x[i],az0=-(surf[i+1][j]-surf[i][j])*zex,
+              by=d.y[j+1]-d.y[j],bz=-(surf[i][j+1]-surf[i][j])*zex;
+        const nx0=-az0*by,ny0=-ax*bz,nz0=ax*by,
+              nl=Math.hypot(nx0,ny0,nz0)||1;
+        const sh=0.62+0.38*Math.abs((nx0*light[0]+ny0*light[1]+nz0*light[2])/(nl*ln));
+        quads.push({pts:[p00,p10,p11,p01],cam:(p00[2]+p10[2]+p11[2]+p01[2])/4,
+          rgb:[base[0]*sh,base[1]*sh,base[2]*sh]});
+      }
+    }
+    quads.sort((a,b)=>a.cam-b.cam);
+    for(const q of quads){const p=q.pts;
+      ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);
+      for(let k=1;k<4;k++)ctx.lineTo(p[k][0],p[k][1]);
+      ctx.closePath();
+      ctx.fillStyle=`rgb(${q.rgb[0]|0},${q.rgb[1]|0},${q.rgb[2]|0})`;ctx.fill();
+      ctx.strokeStyle="rgba(255,255,255,.35)";ctx.lineWidth=0.5;ctx.stroke();}
+    // surface frame + stations on top
+    ctx.strokeStyle="rgba(11,11,11,.35)";ctx.lineWidth=1.1*this.dpr;
+    const corners=[[d.x[0],d.y[0]],[d.x[nx-1],d.y[0]],
+                   [d.x[nx-1],d.y[ny-1]],[d.x[0],d.y[ny-1]]];
+    ctx.beginPath();
+    corners.concat([corners[0]]).forEach(([x,y],i)=>{
+      const p=proj(x,y,0,0);i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});
+    ctx.stroke();
+    if(this.showSta&&d.stations){
+      for(const [sx,sy] of d.stations){
+        const p=proj(sx,sy,0,0);
+        ctx.beginPath();ctx.arc(p[0],p[1],3.4*this.dpr,0,7);
+        ctx.fillStyle="#0b0b0b";ctx.fill();
+        ctx.lineWidth=1.2*this.dpr;ctx.strokeStyle="#fff";ctx.stroke();
+      }
+    }
+    // depth scale hint
+    ctx.fillStyle="#52514e";ctx.font=`${11*this.dpr}px system-ui`;
+    ctx.fillText(`↕ ${Math.round(md)} m`,14*this.dpr,Hh-14*this.dpr);
+  }
+}
+const v3=new Basin3D($("cv3"));
+let v3key="";
+$("btn3d").onclick=()=>{
+  const el=$("view3d");
+  const on=!el.classList.contains("show");
+  el.classList.toggle("show",on);
+  $("btn3d").classList.toggle("on",on);
+  if(on){v3.resize();}
+};
+$("v3close").onclick=()=>{$("view3d").classList.remove("show");
+  $("btn3d").classList.remove("on");};
+$("v3reset").onclick=()=>v3.reset();
+$("v3spin").onchange=e=>{v3.spin=e.target.checked;};
+$("v3explode").onchange=e=>{v3.explode=e.target.checked;v3.draw();};
+$("v3sta").onchange=e=>{v3.showSta=e.target.checked;v3.draw();};
+$("v3ex").oninput=e=>{v3.ex=+e.target.value/100;v3.draw();};
+
+// ========================================================== section tool
+let secMode=0,secPts=[],secLayer=null;
+$("btnSec").onclick=()=>{
+  if(!(STATE&&STATE.job&&STATE.job.vs3d)){
+    $("loadnote").textContent="run an inversion first — the section cuts the inverted model";
+    showTab("data");return;}
+  secMode=1;secPts=[];clearSection();
+  $("btnSec").classList.add("on");
+  $("addhint").textContent="click two points on the map to cut a section — Esc to cancel";
+  $("addhint").style.display="block";
+  document.getElementById("map").style.cursor="crosshair";
+};
+function clearSection(){
+  if(secLayer){map.removeLayer(secLayer);secLayer=null;}
+  $("secpanel").style.display="none";
+}
+function endSecMode(){secMode=0;$("btnSec").classList.remove("on");
+  $("addhint").style.display="none";$("addhint").textContent=
+    "click on the map to place the new point — Esc to cancel";
+  document.getElementById("map").style.cursor="";}
+$("secClose").onclick=()=>clearSection();
+async function cutSection(){
+  const [a,b]=secPts;
+  secLayer=L.layerGroup([
+    L.polyline([a,b],{color:"#0b0b0b",weight:2.5,dashArray:"6 5"}),
+    L.marker(a,{icon:L.divIcon({className:"",iconSize:[18,18],
+      html:'<div style="font-weight:800;font-size:13px;text-shadow:0 0 3px #fff,0 0 3px #fff">A</div>'})}),
+    L.marker(b,{icon:L.divIcon({className:"",iconSize:[18,18],
+      html:'<div style="font-weight:800;font-size:13px;text-shadow:0 0 3px #fff,0 0 3px #fff">B</div>'})})
+  ]).addTo(map);
+  const r=await fetch("/api/section",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({lat1:a.lat,lon1:a.lng,lat2:b.lat,lon2:b.lng})});
+  if(!r.ok){clearSection();return;}
+  const blob=await r.blob();
+  const url=URL.createObjectURL(blob);
+  $("secimg").src=url;
+  $("secDl").href=url;
+  $("secpanel").style.display="block";
+}
+
+// ==================================================== click → depth profile
+async function showProfile(latlng){
+  let p;
+  try{const r=await fetch(`/api/profile?lat=${latlng.lat}&lon=${latlng.lng}`);
+    if(!r.ok)return;p=await r.json();}catch(e){return;}
+  let rows="";
+  p.interfaces.forEach((d,i)=>{rows+=`<tr><td><span style="display:inline-block;
+    width:10px;height:10px;border-radius:2px;background:${BLUES[Math.min(1+i*2,BLUES.length-2)]};
+    margin-right:5px"></span>layer ${i+1} · Vs ${p.vs[i]}</td><td>→ ${d} m</td></tr>`;});
+  L.popup({maxWidth:260}).setLatLng(latlng).setContent(
+    `<div style="font-weight:650;margin-bottom:4px">Inverted column here</div>
+     <table class="profTable">${rows}
+     <tr><td><b>bedrock</b> · Vs ${p.bedrock_vs}</td><td><b>${p.bedrock_depth} m</b></td></tr>
+     </table>${p.inside?"":"<div style='color:#946200;font-size:11px;margin-top:4px'>⚠ outside the inverted area — clamped to edge</div>"}`
+  ).openOn(map);
+}
+</script>
+</body>
+</html>

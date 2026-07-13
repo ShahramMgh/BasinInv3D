@@ -358,7 +358,8 @@ class HVSRInversion:
 
     def __init__(self, model: MultiLayerBasin, spec: LayerSpec, station_xy,
                  freqs, hv_obs, free_mask=None, smooth_weight=3e-3,
-                 order_weight=0.0, peak_weight=4.0, data_weight=0.4):
+                 order_weight=0.0, peak_weight=4.0, data_weight=0.4,
+                 depth_constraints=None, constraint_weight=2.0):
         self.model = model
         self.spec = spec
         self.xy = np.atleast_2d(np.asarray(station_xy, float))
@@ -372,6 +373,25 @@ class HVSRInversion:
         self.data_weight = data_weight
         n = model.n_params
         self.free = np.ones(n, bool) if free_mask is None else np.asarray(free_mask, bool)
+        # depth constraints from external knowledge (boreholes, resistivity,
+        # GPR interpretations, per-station fixed depths…): each entry is a
+        # dict with x, y (grid-local metres), depth (m), optional layer
+        # (1-based interface index; -1 / omitted = bedrock) and weight.
+        self.constraint_weight = constraint_weight
+        self.constraints = []
+        for c in (depth_constraints or []):
+            L = int(c.get("layer", -1) or -1)
+            if L < 0 or L > model.n_layers:
+                L = model.n_layers
+            self.constraints.append(dict(
+                x=float(c["x"]), y=float(c["y"]), layer=L,
+                depth=float(c["depth"]),
+                weight=float(c.get("weight", 1.0))))
+        if self.constraints:
+            self._cxy = np.array([[c["x"], c["y"]] for c in self.constraints])
+            self._cL = np.array([c["layer"] for c in self.constraints], int)
+            self._cd = np.array([c["depth"] for c in self.constraints])
+            self._cw = np.array([c["weight"] for c in self.constraints])
         self.on_eval = None
         self.log = HVSRLog()
 
@@ -401,6 +421,18 @@ class HVSRInversion:
             reg += self.order_weight * np.sum(np.minimum(dv, 0.0) ** 2)
         return reg
 
+    def _constraint_term(self, params):
+        """Quadratic pull of the interface depths toward externally known
+        depths (relative error, so 5 m at a 20 m borehole counts like 25 m at
+        a 100 m one)."""
+        if not self.constraints:
+            return 0.0
+        th, _ = self.model.columns_at(params, self._cxy)
+        depth = np.cumsum(th[:, :-1], axis=1)          # (npts, n_layers)
+        z = depth[np.arange(len(self._cL)), self._cL - 1]
+        rel = (z - self._cd) / np.maximum(self._cd, 10.0)
+        return self.constraint_weight * float(np.mean(self._cw * rel ** 2))
+
     def misfit(self, params):
         pred = self.predict(params)
         logpred = np.log(np.maximum(pred, 1e-6))
@@ -412,7 +444,7 @@ class HVSRInversion:
             fpk = soft_peak(self.freqs, pred)
             peak = self.peak_weight * float(np.mean(
                 (np.log(fpk) - np.log(self.fpk_obs)) ** 2))
-        return data + peak + self._reg(params)
+        return data + peak + self._reg(params) + self._constraint_term(params)
 
     def _grad(self, x_free, x_full, step):
         x_full = x_full.copy()
@@ -468,9 +500,10 @@ def invert_member(args):
     data + its own initial guess) and return the recovered bedrock-depth map.
     Top-level and picklable so it can run in a ProcessPoolExecutor."""
     (model, spec, xy, freqs, hv_obs, free, x0, max_thick, maxiter,
-     smooth_weight) = args
+     smooth_weight, *rest) = args
     inv = HVSRInversion(model, spec, xy, freqs, hv_obs, free_mask=free,
-                        smooth_weight=smooth_weight)
+                        smooth_weight=smooth_weight,
+                        depth_constraints=rest[0] if rest else None)
     xf, _ = inv.run(np.asarray(x0, float), max_thick=max_thick,
                     maxiter=maxiter, verbose=False)
     return model.interface_depths(xf)[-1]

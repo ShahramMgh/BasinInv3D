@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from basininv import (BasinParameterization, GridSpec, Materials,
                       ElasticSolver3D, build_model, gaussian_basin, ricker)

@@ -142,12 +142,17 @@ def render_microtremor(ts, dt, path, station=0):
     fig.savefig(path, dpi=115); plt.close(fig)
 
 
-def render_uncertainty(grid, mean_depth, std_depth, true_depth, xy, path):
+def render_uncertainty(grid, mean_depth, std_depth, true_depth, xy, path,
+                       origin=(0.0, 0.0)):
     """Ensemble bedrock-depth uncertainty: mean, per-cell std (uncertainty),
-    and whether the truth sits within the ±2σ envelope."""
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.0), constrained_layout=True)
-    ext = [0, grid.x[-1], 0, grid.y[-1]]
-    vmax = max(mean_depth.max(), true_depth.max(), 1.0)
+    and — when a ground truth exists — whether it sits within ±2σ."""
+    ox, oy = origin
+    ncol = 3 if true_depth is not None else 2
+    fig, axes = plt.subplots(1, ncol, figsize=(4.4 * ncol + 0.4, 4.0),
+                             constrained_layout=True)
+    ext = [ox, ox + grid.x[-1], oy, oy + grid.y[-1]]
+    vmax = max(mean_depth.max(),
+               true_depth.max() if true_depth is not None else 0.0, 1.0)
     im0 = axes[0].imshow(mean_depth.T, origin="lower", extent=ext,
                          cmap="viridis", vmin=0, vmax=vmax)
     axes[0].set_title("Ensemble-mean bedrock depth")
@@ -156,13 +161,138 @@ def render_uncertainty(grid, mean_depth, std_depth, true_depth, xy, path):
                          vmin=0)
     axes[1].set_title("Depth uncertainty (±1σ)")
     fig.colorbar(im1, ax=axes[1], shrink=0.8, label="σ depth (m)")
-    within = (np.abs(mean_depth - true_depth) <= 2 * std_depth + 1e-9)
-    axes[2].imshow(within.T, origin="lower", extent=ext, cmap="RdYlGn",
-                   vmin=0, vmax=1)
-    axes[2].set_title(f"Truth within ±2σ  ({100*within.mean():.0f}% of area)")
+    if true_depth is not None:
+        within = (np.abs(mean_depth - true_depth) <= 2 * std_depth + 1e-9)
+        axes[2].imshow(within.T, origin="lower", extent=ext, cmap="RdYlGn",
+                       vmin=0, vmax=1)
+        axes[2].set_title(f"Truth within ±2σ  ({100*within.mean():.0f}% of area)")
     for ax in axes:
         ax.scatter(xy[:, 0], xy[:, 1], c="k", s=8, alpha=0.5)
         ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+    fig.savefig(path, dpi=120); plt.close(fig)
+
+
+# ------------------------------------------------------- field-data figures
+
+
+def render_field_map(xy, f0, path, sids=None, ok=None, grid=None,
+                     depth=None, origin=(0.0, 0.0)):
+    """Field campaign map: stations coloured by measured f0; SESAME failures
+    ringed in red; optional inverted bedrock-depth background."""
+    ox, oy = origin
+    fig, ax = plt.subplots(figsize=(6.8, 5.4), constrained_layout=True)
+    if depth is not None and grid is not None:
+        ext = [ox, ox + grid.x[-1], oy, oy + grid.y[-1]]
+        im = ax.imshow(depth.T, origin="lower", extent=ext, cmap="viridis")
+        fig.colorbar(im, ax=ax, shrink=0.85, label="inverted bedrock depth (m)")
+    xy = np.atleast_2d(xy)
+    f0 = np.asarray(f0, float)
+    edge = ["w" if (ok is None or ok[i]) else "#f85149"
+            for i in range(len(xy))]
+    sc = ax.scatter(xy[:, 0], xy[:, 1], c=f0, cmap="turbo_r", s=90,
+                    edgecolor=edge, linewidth=1.4, zorder=3,
+                    norm=matplotlib.colors.LogNorm(vmin=max(f0.min(), 1e-2),
+                                                   vmax=f0.max()))
+    fig.colorbar(sc, ax=ax, shrink=0.85, label="measured f₀ (Hz)")
+    if sids is not None:
+        for i, s in enumerate(sids):
+            ax.annotate(s, xy[i], textcoords="offset points", xytext=(5, 5),
+                        fontsize=6.5, color="#333" if depth is None else "w")
+    bad = 0 if ok is None else int(len(ok) - np.count_nonzero(ok))
+    ax.set_title(f"{len(xy)} field stations — f₀ map"
+                 + (f"  ({bad} fail SESAME)" if bad else ""))
+    ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+    ax.set_aspect("equal")
+    fig.savefig(path, dpi=125); plt.close(fig)
+
+
+def render_proc_qc(results, sids, path, n_show=9):
+    """Per-station processing QC: mean H/V ±σ band, picked f0, window counts
+    and SESAME verdicts."""
+    n = min(n_show, len(results))
+    idx = np.linspace(0, len(results) - 1, n).astype(int)
+    ncol = 3
+    nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 2.7 * nrow),
+                             constrained_layout=True, squeeze=False)
+    for a, si in enumerate(idx):
+        r = results[si]
+        ax = axes[a // ncol][a % ncol]
+        ax.fill_between(r["freqs"], r["hv"] * np.exp(-r["sigma"]),
+                        r["hv"] * np.exp(r["sigma"]), alpha=0.25,
+                        color="#4675ed", lw=0)
+        ax.semilogx(r["freqs"], r["hv"], color="#16324f", lw=1.6)
+        ax.axvline(r["f0"], color="#e05a2a", lw=1.2, ls="--")
+        rel = r.get("reliable", True); clr = r.get("clear_peak", True)
+        tag = ("✓ reliable" if rel else "✗ unreliable") + \
+              (" · clear peak" if clr else " · unclear peak")
+        col = "#1a7f37" if (rel and clr) else "#b35900" if rel else "#c0392b"
+        ax.set_title(f"{sids[si]}   f₀={r['f0']:.2f} Hz", fontsize=9)
+        note = f"{r.get('n_win', '–')} win"
+        if r.get("n_rej"):
+            note += f" ({r['n_rej']} rej)"
+        if r.get("kind") == "hv":
+            note = "pre-processed .hv"
+        ax.text(0.03, 0.94, f"{tag}\n{note}", transform=ax.transAxes,
+                fontsize=7.2, va="top", color=col)
+        ax.grid(alpha=0.3, which="both")
+        ax.set_xlabel("f (Hz)", fontsize=8); ax.set_ylabel("H/V", fontsize=8)
+    for a in range(n, nrow * ncol):
+        axes[a // ncol][a % ncol].axis("off")
+    fig.savefig(path, dpi=120); plt.close(fig)
+
+
+def render_live_field(model, params_cur, path, origin=(0.0, 0.0), xy=None):
+    """Live field-inversion figure (no ground truth): current bedrock depth
+    and a centre Vs cross-section."""
+    ox, oy = origin
+    inv_depth = model.interface_depths(params_cur)[-1]
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.0), constrained_layout=True)
+    ext = [ox, ox + model.grid.x[-1], oy, oy + model.grid.y[-1]]
+    im0 = axes[0].imshow(inv_depth.T, origin="lower", extent=ext,
+                         cmap="viridis", vmin=0)
+    axes[0].set_title("Current bedrock depth")
+    if xy is not None:
+        axes[0].scatter(xy[:, 0], xy[:, 1], c="w", s=10, alpha=0.7,
+                        edgecolor="k", linewidth=0.4)
+    axes[0].set_xlabel("x (m)"); axes[0].set_ylabel("y (m)")
+    fig.colorbar(im0, ax=axes[0], shrink=0.8, label="depth (m)")
+    vol = model.vs_volume(params_cur)
+    im1 = _section(axes[1], model.grid, vol, model.grid.ny // 2, "x",
+                   "Vs section y=centre", float(vol.min()),
+                   float(np.percentile(vol, 99)))
+    fig.colorbar(im1, ax=axes[1], shrink=0.8, label="Vs (m/s)")
+    fig.savefig(path, dpi=115); plt.close(fig)
+
+
+def render_field_depth(model, params, xy, path, origin=(0.0, 0.0),
+                       true_depth=None):
+    """Final field result: per-interface depth maps (+ optional truth diff)."""
+    ox, oy = origin
+    depth = model.interface_depths(params)
+    nL = depth.shape[0]
+    ncol = nL + (1 if true_depth is not None else 0)
+    fig, axes = plt.subplots(1, ncol, figsize=(4.3 * ncol + 0.4, 4.0),
+                             constrained_layout=True, squeeze=False)
+    axes = axes[0]
+    ext = [ox, ox + model.grid.x[-1], oy, oy + model.grid.y[-1]]
+    vmax = float(max(depth[-1].max(), 1.0))
+    for L in range(nL):
+        name = "bedrock" if L == nL - 1 else f"interface {L + 1}"
+        im = axes[L].imshow(depth[L].T, origin="lower", extent=ext,
+                            cmap="viridis", vmin=0, vmax=vmax)
+        axes[L].set_title(f"Depth of {name}")
+        axes[L].scatter(xy[:, 0], xy[:, 1], c="k", s=8, alpha=0.5)
+        axes[L].set_xlabel("x (m)"); axes[L].set_ylabel("y (m)")
+        fig.colorbar(im, ax=axes[L], shrink=0.8, label="depth (m)")
+    if true_depth is not None:
+        d = depth[-1] - true_depth
+        im = axes[-1].imshow(d.T, origin="lower", extent=ext, cmap="coolwarm",
+                             vmin=-0.5 * vmax, vmax=0.5 * vmax)
+        axes[-1].set_title("Bedrock: inverted − truth (validation)")
+        axes[-1].scatter(xy[:, 0], xy[:, 1], c="k", s=8, alpha=0.5)
+        axes[-1].set_xlabel("x (m)"); axes[-1].set_ylabel("y (m)")
+        fig.colorbar(im, ax=axes[-1], shrink=0.8, label="Δ depth (m)")
     fig.savefig(path, dpi=120); plt.close(fig)
 
 

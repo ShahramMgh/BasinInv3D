@@ -69,6 +69,20 @@
   .btnrow{display:flex;gap:9px;margin-top:16px}
   button.act{flex:1;padding:11px 0;border-radius:9px;border:none;font-size:13.5px;
     font-weight:680;cursor:pointer}
+  button.sm{padding:8px 0;font-size:12px;background:var(--panel3);color:var(--ink2);
+    border:1px solid var(--line2)}
+  button.sm:hover:not(:disabled){color:var(--ink);border-color:var(--accent)}
+  .scaninfo{font-size:11.5px;color:var(--ink2);margin-top:8px;min-height:14px}
+  .scaninfo.bad{color:var(--err)}
+  .sttable{max-height:170px;overflow-y:auto;margin-top:8px;border:1px solid var(--line);
+    border-radius:8px}
+  .sttable table{width:100%;border-collapse:collapse;font-size:11px}
+  .sttable th,.sttable td{padding:3px 7px;text-align:left;border-bottom:1px solid var(--line)}
+  .sttable th{position:sticky;top:0;background:var(--panel2);color:var(--ink3);font-weight:600}
+  .sttable td{color:var(--ink2);white-space:nowrap}
+  .sttable .bad{color:var(--err)}
+  .subh{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--ink3);margin:15px 0 2px;border-top:1px solid var(--line);padding-top:11px}
   #run{background:linear-gradient(135deg,var(--accent),#e06a2a);color:#1a0d03;
     box-shadow:0 3px 14px rgba(240,136,62,.3)}
   #run:hover:not(:disabled){filter:brightness(1.08)}
@@ -141,7 +155,7 @@
   <div class="logo">〰️</div>
   <div>
     <h1>Microtremor Studio</h1>
-    <div class="sub">ambient H/V curves → 3D multi-layer basin Vs structure</div>
+    <div class="sub">ambient records / H·V curves → 3D multi-layer basin Vs structure</div>
   </div>
   <a class="navlink" href="http://127.0.0.1:8642" title="active-source elastic FWI app">↔ active-source studio</a>
   <span class="pill" id="pill"><span id="pilltx">idle</span></span>
@@ -149,7 +163,13 @@
 
 <div class="wrap">
   <aside>
-    <div class="card">
+    <div class="card" style="padding:11px">
+      <div class="presetrow" style="grid-template-columns:1fr 1fr;margin:0" id="modes">
+        <div class="pchip sel" data-m="demo">Synthetic demo<small>built-in truth</small></div>
+        <div class="pchip" data-m="field">Field assistant<small>campaign folder</small></div>
+      </div>
+    </div>
+    <div class="card" id="demoCard">
       <h2>Experiment setup</h2>
       <label>Quality preset</label>
       <div class="presetrow" id="presets">
@@ -171,11 +191,70 @@
       <label>Uncertainty ensemble <span class="hint" title="Number of inversions over independent noise realizations. >1 produces a bedrock-depth uncertainty (±σ) map. Adds runtime.">?</span></label>
       <select id="ensemble"><option value="1" selected>off (1 run)</option>
         <option value="3">3 runs</option><option value="5">5 runs</option><option value="8">8 runs</option></select>
-      <div class="btnrow">
-        <button class="act" id="run">▶ Run experiment</button>
+    </div>
+
+    <div class="card hidden" id="fieldCard">
+      <h2>Field campaign</h2>
+      <label>Campaign folder <span class="hint" title="Folder with stations.csv plus per-station raw records (.npz / .csv / .mseed) or processed .hv curves. '✚ Demo campaign' writes an imaginary campaign to disk in exactly this format.">?</span></label>
+      <input id="data_dir" placeholder="path/to/campaign — or generate a demo ↓">
+      <div class="btnrow" style="margin-top:9px">
+        <button class="act sm" id="scanBtn">⌕ Scan folder</button>
+        <button class="act sm" id="genBtn">✚ Demo campaign</button>
+      </div>
+      <div class="scaninfo" id="scanInfo">no campaign scanned yet</div>
+      <div class="sttable hidden" id="sttable"></div>
+
+      <div class="subh">Processing — records → H/V</div>
+      <div class="grid2">
+        <div><label>Window (s) <span class="hint" title="Analysis window length. Longer windows resolve lower f₀ (need f₀ > 10/window).">?</span></label>
+          <input id="win_len" type="number" value="40"></div>
+        <div><label>Overlap <span class="hint" title="Window overlap fraction, 0–0.9.">?</span></label>
+          <input id="overlap" type="number" value="0.5" step="0.1"></div>
+        <div><label>Konno-Ohmachi b <span class="hint" title="Spectral smoothing bandwidth. 40 is the field standard; lower = smoother.">?</span></label>
+          <input id="ko_b" type="number" value="40"></div>
+        <div><label>Horizontal merge</label>
+          <select id="horizontal"><option value="geometric" selected>geometric</option>
+            <option value="quadratic">quadratic</option></select></div>
+        <div><label>f min (Hz)</label><input id="ffmin" type="number" value="0.3" step="0.05"></div>
+        <div><label>f max (Hz)</label><input id="ffmax" type="number" value="12"></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="reject" checked>
+        Reject transient windows (STA/LTA) <span class="hint" title="Anti-trigger: windows where the STA/LTA of the 3-component envelope leaves the band below are discarded (traffic, footsteps…).">?</span></label>
+      <div class="grid2" id="rejrow">
+        <div><label>STA (s)</label><input id="sta" type="number" value="1"></div>
+        <div><label>LTA (s)</label><input id="lta" type="number" value="30"></div>
+        <div><label>min STA/LTA</label><input id="min_ratio" type="number" value="0.3" step="0.1"></div>
+        <div><label>max STA/LTA</label><input id="max_ratio" type="number" value="2.5" step="0.1"></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="only_reliable">
+        Invert only SESAME-reliable stations <span class="hint" title="Drop stations whose H/V curve fails the SESAME reliability criteria from the inversion (they are still shown in QC).">?</span></label>
+
+      <div class="subh">Inversion</div>
+      <label>Sediment layers <span class="hint" title="Assumed number of sediment layers over bedrock. Set the initial Vs of each; check 'fix' when a layer's Vs is known (borehole, MASW) — known Vs makes multi-layer HVSR far better posed.">?</span></label>
+      <select id="fn_layers"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+      <div id="flayerbox" style="margin-top:6px"></div>
+      <div class="grid2">
+        <div><label>Bedrock Vs (m/s)</label><input id="bedrock_vs" type="number" value="1800"></div>
+        <div><label>Vp/Vs</label><input id="vpvs" type="number" value="2.2" step="0.1"></div>
+        <div><label>Nodes / side <span class="hint" title="Thickness control nodes per horizontal direction (2–5). More nodes = more lateral detail, more non-uniqueness.">?</span></label>
+          <input id="fncx" type="number" value="3" min="2" max="5"></div>
+        <div><label>Max iterations</label><input id="fmaxiter" type="number" value="70"></div>
+        <div><label>Smoothing</label><input id="fsmooth" type="number" value="0.004" step="0.001"></div>
+        <div><label>Max depth (m) <span class="hint" title="Upper bound for any layer thickness. 0 = automatic from the lowest measured f₀ and the initial Vs.">?</span></label>
+          <input id="max_depth" type="number" value="0"></div>
+      </div>
+      <label>Uncertainty ensemble <span class="hint" title="Extra inversions with the H/V curves perturbed within their measured window scatter, plus varied start model / smoothing / node grid. Produces a depth ±σ map.">?</span></label>
+      <select id="fensemble"><option value="1" selected>off (1 run)</option>
+        <option value="3">3 runs</option><option value="5">5 runs</option><option value="8">8 runs</option></select>
+    </div>
+
+    <div class="card" style="padding:12px">
+      <div class="btnrow" style="margin-top:0">
+        <button class="act" id="run">▶ Run</button>
         <button class="act" id="stop" disabled>■ Stop</button>
       </div>
     </div>
+
     <div class="card">
       <h2>How it works</h2>
       <div style="font-size:12.5px;color:var(--ink2)">
@@ -185,6 +264,10 @@
         laterally-varying <b style="color:var(--ink)">multi-layer</b> model to all
         stations at once recovers the 3D basin. HVSR resolves depths whose f₀
         stays in band — deeper basins need known Vs or a fixed bedrock.
+        <br><br><b style="color:var(--ink)">Field assistant</b> mode reads a
+        campaign folder of real recordings (or ready H/V curves), applies
+        SESAME-style processing and QC, and inverts the measured curves —
+        no ground truth required.
       </div>
     </div>
   </aside>
@@ -196,7 +279,7 @@
       <div class="step" data-s="invert" data-i="1"><div class="idx"><span>2</span></div>
         <div class="lab">Invert<small>fit all H/V curves</small></div></div>
       <div class="step" data-s="report" data-i="2"><div class="idx"><span>3</span></div>
-        <div class="lab">Report<small>score vs truth</small></div></div>
+        <div class="lab">Report<small id="steplab3">score vs truth</small></div></div>
     </div>
 
     <div class="card" style="margin-bottom:16px">
@@ -204,8 +287,8 @@
       <div class="note" id="note">Configure on the left and press <b>Run</b>.</div>
       <div class="tiles">
         <div class="tile"><div class="v" id="t_misfit">–</div><div class="k">HVSR misfit</div><div class="d" id="t_misfit_d"></div></div>
-        <div class="tile"><div class="v" id="t_rms">–</div><div class="k">bedrock RMS error</div><div class="d" id="t_rms_d">m</div></div>
-        <div class="tile"><div class="v" id="t_corr">–</div><div class="k">depth correlation</div><div class="d" id="t_corr_d"></div></div>
+        <div class="tile"><div class="v" id="t_rms">–</div><div class="k" id="k_rms">bedrock RMS error</div><div class="d" id="t_rms_d">m</div></div>
+        <div class="tile"><div class="v" id="t_corr">–</div><div class="k" id="k_corr">depth correlation</div><div class="d" id="t_corr_d"></div></div>
         <div class="tile"><div class="v" id="t_time">–</div><div class="k">elapsed</div><div class="d" id="t_time_d"></div></div>
       </div>
       <div id="err"></div>
@@ -229,15 +312,18 @@
     </div>
 
     <section class="panel show" data-panel="data">
-      <p class="lead"><b>Step 1 — Stations &amp; Data.</b> An imaginary layered
-        basin is built; at each surface station an ambient-noise record is
-        synthesised and reduced to its H/V spectral ratio. Only these curves and
-        station coordinates are passed to the inversion.</p>
+      <p class="lead"><b>Step 1 — Stations &amp; Data.</b> <span id="lead1">An
+        imaginary layered basin is built; at each surface station an
+        ambient-noise record is synthesised and reduced to its H/V spectral
+        ratio. Only these curves and station coordinates are passed to the
+        inversion.</span></p>
       <div class="imgs">
         <div class="card imgcard wide" id="c_stations"><h2><span class="num">1</span>Stations over true bedrock (coloured by observed f₀)</h2>
           <img id="i_stations"><div class="ph" id="ph_stations">built at run start…</div></div>
         <div class="card imgcard wide" id="c_microtremor"><h2><span class="num">1</span>Example microtremor record</h2>
           <img id="i_microtremor"><div class="ph" id="ph_microtremor">synthesised per station…</div></div>
+        <div class="card imgcard wide hidden" id="c_proc_qc"><h2><span class="num">1</span>Processing QC — H/V ±σ · f₀ pick · SESAME criteria</h2>
+          <img id="i_proc_qc"><div class="ph" id="ph_proc_qc">record processing…</div></div>
         <div class="card imgcard wide" id="c_hvsr_fit"><h2><span class="num">1</span>Observed H/V curves</h2>
           <img id="i_hvsr_fit"><div class="ph" id="ph_hvsr_fit">extracted from records…</div></div>
       </div>
@@ -262,9 +348,9 @@
       <div class="imgs">
         <div class="card imgcard wide hidden" id="c_uncertainty"><h2><span class="num">3</span>Bedrock-depth uncertainty (ensemble ±σ)</h2>
           <img id="i_uncertainty"><div class="ph" id="ph_uncertainty">enable the uncertainty ensemble…</div></div>
-        <div class="card imgcard wide" id="c_vs_sections"><h2><span class="num">3</span>Vs cross-sections — true vs inverted</h2>
+        <div class="card imgcard wide" id="c_vs_sections"><h2><span class="num">3</span><span id="h_vssec">Vs cross-sections — true vs inverted</span></h2>
           <img id="i_vs_sections"><div class="ph" id="ph_vs_sections">final figures…</div></div>
-        <div class="card imgcard wide" id="c_depth_compare"><h2><span class="num">3</span>Bedrock depth — true · inverted · difference</h2>
+        <div class="card imgcard wide" id="c_depth_compare"><h2><span class="num">3</span><span id="h_depth">Bedrock depth — true · inverted · difference</span></h2>
           <img id="i_depth_compare"><div class="ph" id="ph_depth_compare">final figures…</div></div>
         <div class="card imgcard wide" id="c_hvsr_fit2"><h2><span class="num">3</span>H/V fit — observed vs modelled</h2>
           <img id="i_hvsr_fit2"><div class="ph" id="ph_hvsr_fit2">observed vs modelled…</div></div>
@@ -369,18 +455,97 @@ $("explode").onchange=e=>{vw.explode=e.target.checked;vw.draw();};
 $("resetView").onclick=()=>vw.reset();
 
 const DEF_VS=[300,420,540,640];
-function buildLayers(){
-  const nL=+$("n_layers").value,box=$("layerbox");box.innerHTML="";
+function buildLayerRows(nSelId,boxId,prefix){
+  const nL=+$(nSelId).value,box=$(boxId);box.innerHTML="";
   for(let L=0;L<nL;L++){
     const rgb=turbo(nL>1?L/(nL-1):0.5);
     const row=document.createElement("div");row.className="layerrow";
     row.innerHTML=`<div class="sw" style="background:rgb(${rgb.map(x=>x|0).join(",")})"></div>
-      <input type="number" id="vs${L}" value="${DEF_VS[L]||300+L*120}" title="initial Vs of layer ${L+1} (m/s)">
-      <label class="fx"><input type="checkbox" id="fx${L}"> fix Vs</label>`;
+      <input type="number" id="${prefix}vs${L}" value="${DEF_VS[L]||300+L*120}" title="initial Vs of layer ${L+1} (m/s)">
+      <label class="fx"><input type="checkbox" id="${prefix}fx${L}"> fix Vs</label>`;
     box.appendChild(row);
   }
 }
+const buildLayers=()=>buildLayerRows("n_layers","layerbox","");
+const buildFLayers=()=>buildLayerRows("fn_layers","flayerbox","f_");
 $("n_layers").onchange=buildLayers;buildLayers();
+$("fn_layers").onchange=buildFLayers;buildFLayers();
+
+// ------------------------------------------------------------ mode switch
+let mode="demo";
+function applyModeLabels(fm){
+  $("k_rms").textContent=fm?"median f₀ residual":"bedrock RMS error";
+  $("k_corr").textContent=fm?"max bedrock depth":"depth correlation";
+  $("h_vssec").textContent=fm?"Vs cross-sections — inverted":"Vs cross-sections — true vs inverted";
+  $("h_depth").textContent=fm?"Interface & bedrock depth maps":"Bedrock depth — true · inverted · difference";
+  $("steplab3").textContent=fm?"maps & uncertainty":"score vs truth";
+  $("lead1").textContent=fm
+    ?"The campaign folder is read station by station: raw records are windowed, "+
+     "quality-controlled and reduced to H/V curves with uncertainties (SESAME "+
+     "criteria); ready .hv curves are used as-is. Only the curves and station "+
+     "coordinates are passed to the inversion."
+    :"An imaginary layered basin is built; at each surface station an "+
+     "ambient-noise record is synthesised and reduced to its H/V spectral "+
+     "ratio. Only these curves and station coordinates are passed to the inversion.";
+}
+document.querySelectorAll("#modes .pchip").forEach(c=>{c.onclick=()=>{
+  mode=c.dataset.m;
+  document.querySelectorAll("#modes .pchip").forEach(x=>x.classList.toggle("sel",x===c));
+  $("demoCard").classList.toggle("hidden",mode!=="demo");
+  $("fieldCard").classList.toggle("hidden",mode!=="field");
+  applyModeLabels(mode==="field");
+};});
+$("reject").onchange=e=>{$("rejrow").style.display=e.target.checked?"":"none";};
+
+// ------------------------------------------------------- campaign scanning
+let tableKey="";
+function renderTable(rows){
+  const el=$("sttable");
+  if(!rows||!rows.length){el.classList.add("hidden");return;}
+  el.classList.remove("hidden");
+  let h=`<table><tr><th>id</th><th>data</th><th>x</th><th>y</th><th>f₀</th><th>QC</th></tr>`;
+  for(const st of rows){
+    const kind=st.kind+(st.duration?` ${Math.round(st.duration)}s`:"")
+      +(st.n_win!=null?` · ${st.n_win}w`:"");
+    const qc=st.reliable==null?"–":(st.reliable?(st.clear_peak===false?"✓ (peak?)":"✓")
+      :`<span class="bad">✗ SESAME</span>`);
+    h+=`<tr><td>${st.sid}</td><td>${kind}</td><td>${(+st.x).toFixed(0)}</td>
+      <td>${(+st.y).toFixed(0)}</td><td>${st.f0!=null?(+st.f0).toFixed(2):"–"}</td><td>${qc}</td></tr>`;
+  }
+  el.innerHTML=h+"</table>";
+}
+async function doScan(){
+  const info=$("scanInfo");info.className="scaninfo";info.textContent="scanning…";
+  let j;
+  try{j=await(await fetch("/api/scan",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({data_dir:$("data_dir").value})})).json();}
+  catch(e){j={error:String(e)};}
+  if(j.error){info.className="scaninfo bad";info.textContent="⚠ "+j.error;
+    renderTable(null);return false;}
+  $("data_dir").value=j.folder;
+  const kinds=j.stations.reduce((a,s)=>(a[s.kind]=(a[s.kind]||0)+1,a),{});
+  info.textContent=`${j.stations.length} stations (`+
+    Object.entries(kinds).map(([k,v])=>`${v} ${k}`).join(", ")+")"+
+    (j.has_truth?" · hidden truth present (demo)":"");
+  renderTable(j.stations);tableKey="scan";
+  return true;
+}
+$("scanBtn").onclick=doScan;
+$("genBtn").onclick=async()=>{
+  const info=$("scanInfo");
+  $("genBtn").disabled=true;info.className="scaninfo";
+  info.textContent="synthesising records & writing campaign folder…";
+  try{
+    const j=await(await fetch("/api/make_demo",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({data_dir:$("data_dir").value,
+        seed:+($("seed").value||2)})})).json();
+    if(j.error){info.className="scaninfo bad";info.textContent="⚠ "+j.error;return;}
+    $("data_dir").value=j.folder;
+    await doScan();
+  }finally{$("genBtn").disabled=false;}
+};
 
 let viewTab="data",userPicked=false,vsKey="";
 function showTab(name){viewTab=name;
@@ -416,15 +581,34 @@ async function poll(){
   $("bar").style.width=(100*(s.progress||0))+"%";
   $("note").textContent=s.stage_note||(done?"Experiment complete.":$("note").textContent);
 
+  const fm=(s.mode==="field");
+  if(s.config)applyModeLabels(fm);
   const m=s.misfit||[],r=s.rms||[];
   if(m.length){$("t_misfit").textContent=fmt(m[m.length-1]);$("t_misfit_d").textContent="start "+fmt(m[0]);}
-  if(r.length){$("t_rms").textContent=Math.round(r[r.length-1]);
-    $("t_rms_d").textContent="m · start "+Math.round(r[0]);
-    $("t_rms").className="v"+(r[r.length-1]<0.6*r[0]?" good":(r[r.length-1]>r[0]?" warm":""));}
-  if(s.result&&s.result.corr!=null){$("t_corr").textContent=s.result.corr.toFixed(2);
+  if(r.length){
+    if(fm){$("t_rms").textContent=r[r.length-1].toFixed(1)+"%";
+      $("t_rms_d").textContent="start "+r[0].toFixed(1)+"%";
+      $("t_rms").className="v"+(r[r.length-1]<8?" good":(r[r.length-1]>25?" warm":""));}
+    else{$("t_rms").textContent=Math.round(r[r.length-1]);
+      $("t_rms_d").textContent="m · start "+Math.round(r[0]);
+      $("t_rms").className="v"+(r[r.length-1]<0.6*r[0]?" good":(r[r.length-1]>r[0]?" warm":""));}}
+  if(s.result&&fm&&s.result.max_depth_inv!=null){
+    $("t_corr").textContent=Math.round(s.result.max_depth_inv)+" m";
+    $("t_corr").className="v";
+    $("t_corr_d").textContent=(s.result.corr!=null
+      ?"truth corr "+s.result.corr.toFixed(2)+" · ":"")
+      +(s.result.depth_std_median!=null
+      ?"±"+Math.round(s.result.depth_std_median)+" m (1σ)"
+      :s.result.n_used+" stations");}
+  else if(s.result&&s.result.corr!=null){$("t_corr").textContent=s.result.corr.toFixed(2);
     $("t_corr").className="v"+(s.result.corr>0.8?" good":(s.result.corr<0.4?" warm":""));
     $("t_corr_d").textContent=s.result.depth_std_median!=null
       ?"±"+Math.round(s.result.depth_std_median)+" m (1σ)":"";}
+  if(s.stations_table){
+    const key="run:"+s.stations_table.length+":"+(s.stations_table[0]?s.stations_table[0].f0:"");
+    if(key!==tableKey){tableKey=key;renderTable(s.stations_table);
+      $("scanInfo").className="scaninfo";
+      $("scanInfo").textContent=s.stations_table.length+" stations processed";}}
   if(s.t_start){const el=s.result?s.result.elapsed:(running?Date.now()/1000-s.t_start:null);
     if(el!=null){$("t_time").textContent=el>90?Math.floor(el/60)+"m"+String(Math.round(el%60)).padStart(2,"0"):Math.round(el)+"s";
       $("t_time_d").textContent=s.result?s.result.n_evals+" evals":"";}}
@@ -434,7 +618,7 @@ async function poll(){
       $("badge").textContent=s.stage==="data"?"true basin (hidden from inversion)":
         (s.stage==="done"?"inverted Vs structure · final":"inverted Vs structure · live");}}
 
-  ["stations","microtremor","hvsr_fit","live_vs","convergence","vs_sections","depth_compare","uncertainty"]
+  ["stations","microtremor","hvsr_fit","proc_qc","live_vs","convergence","vs_sections","depth_compare","uncertainty"]
     .forEach(n=>setImg(n,(s.images||{})[n]));
   const hv=(s.images||{}).hvsr_fit;
   if(hv&&$("i_hvsr_fit2").dataset.v!==String(hv)){$("i_hvsr_fit2").dataset.v=String(hv);
@@ -447,18 +631,44 @@ async function poll(){
 }
 
 $("run").onclick=async()=>{
-  userPicked=false;vsKey="";
-  ["stations","microtremor","hvsr_fit","hvsr_fit2","live_vs","convergence","vs_sections","depth_compare"]
+  let body;
+  if(mode==="field"){
+    if(!$("data_dir").value.trim()){
+      $("scanInfo").className="scaninfo bad";
+      $("scanInfo").textContent="⚠ set a campaign folder (or generate the demo campaign) first";
+      return;}
+    const nL=+$("fn_layers").value,vs=[],fix=[];
+    for(let L=0;L<nL;L++){vs.push(+$("f_vs"+L).value);fix.push($("f_fx"+L).checked);}
+    body={mode:"field",data_dir:$("data_dir").value.trim(),
+      win_len:+$("win_len").value,overlap:+$("overlap").value,
+      ko_b:+$("ko_b").value,horizontal:$("horizontal").value,
+      reject:$("reject").checked,sta:+$("sta").value,lta:+$("lta").value,
+      min_ratio:+$("min_ratio").value,max_ratio:+$("max_ratio").value,
+      only_reliable:$("only_reliable").checked,
+      fmin:+$("ffmin").value,fmax:+$("ffmax").value,
+      n_layers:nL,vs_init:vs,fix_vs:fix,
+      bedrock_vs:+$("bedrock_vs").value,vpvs:+$("vpvs").value,
+      ncx:+$("fncx").value,maxiter:+$("fmaxiter").value,
+      smooth_weight:+$("fsmooth").value,max_depth:+$("max_depth").value,
+      ensemble:+$("fensemble").value,seed:+($("seed").value||1)};
+  }else{
+    const nL=+$("n_layers").value,vs=[],fix=[];
+    for(let L=0;L<nL;L++){vs.push(+$("vs"+L).value);fix.push($("fx"+L).checked);}
+    body={mode:"demo",preset,seed:$("seed").value,noise_pct:$("noise_pct").value,
+      n_layers:nL,vs_true:vs,fix_vs:fix,bedrock_known:$("bedrock_known").checked,
+      ensemble:+$("ensemble").value};
+  }
+  userPicked=false;vsKey="";tableKey="";
+  ["stations","microtremor","hvsr_fit","hvsr_fit2","proc_qc","live_vs","convergence","vs_sections","depth_compare"]
     .forEach(n=>{const img=$("i_"+n),ph=$("ph_"+n);
       if(img){img.classList.add("hidden");img.dataset.v="";}if(ph)ph.classList.remove("hidden");});
   vw.setData(null);$("badge").textContent="run to build the model…";
-  const nL=+$("n_layers").value,vs=[],fix=[];
-  for(let L=0;L<nL;L++){vs.push(+$("vs"+L).value);fix.push($("fx"+L).checked);}
-  const body={preset,seed:$("seed").value,noise_pct:$("noise_pct").value,
-    n_layers:nL,vs_true:vs,fix_vs:fix,bedrock_known:$("bedrock_known").checked,
-    ensemble:+$("ensemble").value};
-  ["uncertainty"].forEach(n=>{$("c_"+n).classList.add("hidden");});
-  await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  ["uncertainty","proc_qc"].forEach(n=>{$("c_"+n).classList.add("hidden");});
+  const resp=await fetch("/api/start",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!resp.ok){const j=await resp.json().catch(()=>({}));
+    $("err").textContent=j.error||("start failed: HTTP "+resp.status);return;}
+  $("err").textContent="";
   showTab("data");poll();
 };
 $("stop").onclick=()=>fetch("/api/stop",{method:"POST"});
